@@ -1,15 +1,18 @@
 # CLIPLINK — Product Requirements Document
 
-**Version**: 1.1  
-**Status**: Draft  
+**Version**: 1.2  
+**Status**: Implemented locally / pre-deploy  
 **Author**: bkht  
-**Date**: 2026-03-28
+**Date**: 2026-03-28  
+**Last Updated**: 2026-03-28
 
 ---
 
 ## 1. Overview
 
 CLIPLINK is a lightweight, zero-auth web service for syncing clipboard content across devices in real time. Users create a room, share a short code, and anything sent from one device is instantly available — and copied — on the other. No accounts, no install, no friction.
+
+This PRD now reflects both the original product intent and the current implementation status in the local codebase.
 
 ---
 
@@ -60,10 +63,35 @@ Copying a URL, snippet, or chunk of text from one device to another is annoying.
 
 ## 6. Features
 
+### 6.0 Current Implementation Status
+
+Implemented locally in the current codebase:
+
+- Landing screen with create-room and join-by-code flows
+- Room entry via `?room=XXXXXX`
+- Room header with always-visible room code badge
+- Text editor with live character count
+- Send via button and `Cmd/Ctrl + Enter`
+- "Paste from device" clipboard read action
+- History list with `↑ OUT` / `↓ IN`, timestamps, preview, and one-click copy
+- Toast notifications and subtle full-screen receive flash
+- HTTP polling transport at 1.5s
+- API routes for room creation, room fetch, clip creation, and polling
+- Session-local sender identity and session-local visible history
+- Basic per-IP clip rate limiting in the API layer
+
+Not yet implemented:
+
+- Cloudflare KV binding in deployment
+- SSE endpoint and transport
+- QR code sharing
+- Durable Object / WebSocket transport
+- End-to-end encryption
+
 ### 6.1 Rooms
 
 - Rooms are identified by a randomly generated 6-character alphanumeric code (e.g. `X7KP2M`)
-- Rooms are ephemeral — no persistence beyond the session by default
+- Rooms are ephemeral; server-side room state is designed to expire automatically after inactivity
 - Any number of devices can join the same room
 - No authentication required to create or join a room
 - Rooms are accessible via `cliplink.app/?room=X7KP2M`
@@ -81,12 +109,14 @@ Copying a URL, snippet, or chunk of text from one device to another is annoying.
 - The latest incoming clip is automatically copied to the device clipboard (with browser permission)
 - A subtle full-screen flash and toast notification confirms receipt
 - History is limited to the last 20 clips in the current session
+- If clipboard write is blocked, the clip still appears in history and manual copy remains available
 
 ### 6.4 History
 
 - Each clip shows: direction (IN / OUT), timestamp, truncated preview, and a one-click copy button
 - History is local to the session — cleared on page reload or room leave
 - Outgoing clips are marked ↑ OUT; incoming are marked ↓ IN
+- Visible history is capped to 20 items; stored room history is capped to 50 clips
 
 ### 6.5 Sharing
 
@@ -100,20 +130,21 @@ Copying a URL, snippet, or chunk of text from one device to another is annoying.
 
 ### 7.1 Frontend
 
-- Single HTML file, no framework dependency for v1
-- BroadcastChannel API for same-browser cross-tab sync
+- Next.js 16 App Router application
+- Interactive room experience implemented as a client component
 - Navigator Clipboard API for auto-copy on receive
-- Polling at 1.5s intervals for cross-device sync (M1)
-- Upgrades to SSE in M2, then WebSocket in M4 — same client interface, transport swapped underneath
+- Polling at 1.5s intervals for cross-device sync (current M1 implementation)
+- Transport abstraction is in place so polling can be replaced by SSE in M2 and WebSockets in M4 without rewriting the room UI
+- M0 prototype remains in `prototype.html` as the original single-file reference
 
 ### 7.2 Backend (v1 target)
 
-| Layer     | Choice             | Rationale                                       |
-| --------- | ------------------ | ----------------------------------------------- |
-| Runtime   | Cloudflare Workers | Edge, zero cold start, global                   |
-| Storage   | Cloudflare KV      | Fast reads, built-in TTL for ephemeral rooms    |
-| Transport | HTTP polling → SSE | Simplest viable path; SSE upgrade before launch |
-| Hosting   | Cloudflare Pages   | Single file deploy, same edge network           |
+| Layer     | Current implementation                         | Target deployment                                |
+| --------- | ---------------------------------------------- | ------------------------------------------------ |
+| Runtime   | Next.js App Router route handlers              | Cloudflare Workers / Pages-compatible deployment |
+| Storage   | Storage adapter with in-memory fallback        | Cloudflare KV with TTL                           |
+| Transport | HTTP polling                                   | HTTP polling → SSE                               |
+| Hosting   | Local Next app                                 | Cloudflare Pages                                 |
 
 ### 7.3 Data Model
 
@@ -135,6 +166,8 @@ type Clip = {
 
 Room TTL in KV: **6 hours** from last activity. Clips capped at 50 per room.
 
+Current local implementation note: the storage adapter already enforces clip caps and TTL semantics, but production persistence still requires a real Cloudflare KV binding.
+
 ### 7.4 API Routes
 
 | Method | Route                          | Description                             |
@@ -144,6 +177,11 @@ Room TTL in KV: **6 hours** from last activity. Clips capped at 50 per room.
 | `POST` | `/rooms/:code/clips`           | Send a new clip                         |
 | `GET`  | `/rooms/:code/clips?after=:id` | Poll for new clips since `id`           |
 | `GET`  | `/rooms/:code/stream`          | SSE stream for real-time updates (v1.1) |
+
+Current implementation status:
+
+- Implemented: `POST /rooms`, `GET /rooms/:code`, `POST /rooms/:code/clips`, `GET /rooms/:code/clips?after=:id`
+- Not yet implemented: `GET /rooms/:code/stream`
 
 ### 7.5 Transport upgrade path
 
@@ -222,10 +260,11 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 
 - Room codes are randomly generated with ~40 bits of entropy — guessing is not practical
 - No user data is stored; `senderId` is a random string generated client-side per session
-- Rooms and clips expire automatically via KV TTL
+- Rooms and clips are designed to expire automatically via TTL-backed storage
 - No logs retained beyond Cloudflare's default request logging
 - HTTPS enforced at the edge
 - v2 consideration: optional end-to-end encryption using WebCrypto, key derived from room code + user passphrase
+- Current implementation includes basic per-IP clip creation rate limiting
 
 ---
 
@@ -259,20 +298,34 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 | Milestone          | Scope                                                                        | Target  |
 | ------------------ | ---------------------------------------------------------------------------- | ------- |
 | **M0** — Prototype | Single HTML file, localStorage backend, cross-tab sync                       | Done    |
-| **M1** — Alpha     | Cloudflare Worker + KV, HTTP polling, deployed URL                           | 1 week  |
+| **M1** — Alpha     | HTTP polling app flow, room APIs, deployable Cloudflare-backed MVP           | In progress |
 | **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | 2 weeks |
 | **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | 3 weeks |
 | **M4** — v2        | WebSocket via Durable Objects, E2E encryption option, file/image support     | TBD     |
+
+M1 implementation currently completed locally:
+
+- Product UI migrated from prototype into the Next app
+- Polling-based room sync implemented
+- API surface implemented
+- Rate limiting implemented at a basic level
+
+Remaining work before M1 can be considered shipped:
+
+- Bind storage to Cloudflare KV
+- Configure Cloudflare deployment
+- Smoke-test real cross-device production behavior
 
 ---
 
 ## 12. Open Questions
 
 - Should rooms support a passphrase for access control, or is code-based access sufficient for v1?
-- What's the right room TTL? 6 hours vs. 24 hours vs. "until last device leaves"
-- Rate limit per IP on clip creation? (suggested: 60 clips/min/IP)
+- Is 6 hours still the right room TTL, or should production use 24 hours?
+- Is the current default rate limit of 60 clips/min/IP sufficient in production?
 - Should the room creator have any elevated permissions (e.g. ability to clear history)?
 - When does SSE become a bottleneck? Define the concurrency threshold that triggers the DO/WebSocket migration (suggested: >500 concurrent rooms)
+- Should the deployed app keep the current local-session history behavior, or add optional room restore on reload later?
 
 ---
 
