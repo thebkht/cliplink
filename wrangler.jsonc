@@ -7,16 +7,16 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": ".open-next/assets",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
   },
   "kv_namespaces": [
     {
       "binding": "CLIPLINK_ROOMS",
-      "id": "00000000000000000000000000000000",
-      "preview_id": "11111111111111111111111111111111"
-    }
+      "id": "ef3d35a5d1a34413a91379b90515ef5b",
+      "preview_id": "c711bae6b4284a2b9e1a87c6b12b2ec2",
+    },
   ],
   "observability": {
-    "enabled": true
-  }
+    "enabled": true,
+  },
 }
