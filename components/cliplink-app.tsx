@@ -3,9 +3,16 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { MAX_SESSION_HISTORY, POLL_INTERVAL_MS } from "@/lib/cliplink/constants";
+import {
+  MAX_SESSION_HISTORY,
+  POLL_INTERVAL_MS,
+} from "@/lib/cliplink/constants";
 import { readClipboard, writeClipboard } from "@/lib/cliplink/clipboard";
-import { formatCharCount, formatHistoryTime, truncatePreview } from "@/lib/cliplink/format";
+import {
+  formatCharCount,
+  formatHistoryTime,
+  truncatePreview,
+} from "@/lib/cliplink/format";
 import { createPollingTransport, createRoomRequest } from "@/lib/cliplink/http";
 import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
 import { getSessionSenderId } from "@/lib/cliplink/session";
@@ -20,7 +27,10 @@ type ToastItem = {
   tone: ToastTone;
 };
 
+type ThemeMode = "dark" | "light";
+
 const transport = createPollingTransport();
+const THEME_STORAGE_KEY = "cliplink:theme";
 
 function sortClipsNewestFirst(clips: SessionClip[]) {
   return [...clips].sort((left, right) => right.id - left.id);
@@ -55,7 +65,13 @@ function statusLabel(status: RoomStatus) {
 
 function IconPlus() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
       <path
         d="M12 5V19M5 12H19"
         stroke="currentColor"
@@ -68,9 +84,67 @@ function IconPlus() {
 
 function IconCopy() {
   return (
-    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" />
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <rect
+        x="9"
+        y="9"
+        width="13"
+        height="13"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path
+        d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function IconTheme({ theme }: { theme: ThemeMode }) {
+  if (theme === "light") {
+    return (
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M12 3V5M12 19V21M4.93 4.93L6.34 6.34M17.66 17.66L19.07 19.07M3 12H5M19 12H21M4.93 19.07L6.34 17.66M17.66 6.34L19.07 4.93M16 12A4 4 0 1 1 8 12A4 4 0 0 1 16 12Z"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -88,6 +162,7 @@ export default function CliplinkApp() {
   const [isBusy, setIsBusy] = useState(false);
   const [flashActive, setFlashActive] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [theme, setTheme] = useState<ThemeMode>("dark");
 
   const senderIdRef = useRef("");
   const lastSeenIdRef = useRef(0);
@@ -99,6 +174,22 @@ export default function CliplinkApp() {
   useEffect(() => {
     senderIdRef.current = getSessionSenderId();
   }, []);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") {
+      setTheme(stored);
+      document.documentElement.dataset.theme = stored;
+      return;
+    }
+
+    document.documentElement.dataset.theme = "dark";
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     roomCodeRef.current = roomCode;
@@ -128,7 +219,11 @@ export default function CliplinkApp() {
   }, []);
 
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && roomCodeRef.current) {
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key === "Enter" &&
+      roomCodeRef.current
+    ) {
       event.preventDefault();
       void sendClip();
     }
@@ -156,7 +251,13 @@ export default function CliplinkApp() {
     }
 
     const query = next.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    router.replace(query ? `${pathname}?${query}` : pathname, {
+      scroll: false,
+    });
+  }
+
+  function toggleTheme() {
+    setTheme((current) => (current === "dark" ? "light" : "dark"));
   }
 
   function clearSyncReset() {
@@ -286,7 +387,10 @@ export default function CliplinkApp() {
     setIsBusy(true);
     try {
       await hydrateRoom(normalized);
-      pushToast(fromLink ? "Joined room from link." : "Joined room.", "success");
+      pushToast(
+        fromLink ? "Joined room from link." : "Joined room.",
+        "success",
+      );
     } catch (error) {
       setStatus("error");
       setRoomCode(null);
@@ -316,7 +420,10 @@ export default function CliplinkApp() {
 
   async function pollForUpdates(nextRoomCode: RoomCode) {
     try {
-      const response = await transport.pollClips(nextRoomCode, lastSeenIdRef.current);
+      const response = await transport.pollClips(
+        nextRoomCode,
+        lastSeenIdRef.current,
+      );
       const incoming = response.clips.filter(
         (clip) => clip.senderId !== senderIdRef.current,
       );
@@ -395,7 +502,10 @@ export default function CliplinkApp() {
       const text = await readClipboard();
       setEditorText(text);
     } catch {
-      pushToast("Clipboard access denied. Paste manually with Ctrl/Cmd+V.", "info");
+      pushToast(
+        "Clipboard access denied. Paste manually with Ctrl/Cmd+V.",
+        "info",
+      );
     }
   }
 
@@ -417,9 +527,21 @@ export default function CliplinkApp() {
           <div className="cliplink-logo">
             CLIP<span>LINK</span>
           </div>
-          <div className="status-pill" aria-live="polite">
-            <div className={`status-dot ${status === "offline" ? "" : status}`} />
-            <span>{statusLabel(status)}</span>
+          <div className="header-actions">
+            <div className="status-pill" aria-live="polite">
+              <div
+                className={`status-dot ${status === "offline" ? "" : status}`}
+              />
+              <span>{statusLabel(status)}</span>
+            </div>
+            <button
+              className="theme-toggle"
+              type="button"
+              onClick={toggleTheme}
+            >
+              <IconTheme theme={theme} />
+              {/* {theme === "dark" ? "Light" : "Dark"} */}
+            </button>
           </div>
         </header>
 
@@ -440,7 +562,11 @@ export default function CliplinkApp() {
                 </div>
 
                 <div className="action-stack">
-                  <button className="btn btn-primary" onClick={() => void createRoom()} disabled={isBusy}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => void createRoom()}
+                    disabled={isBusy}
+                  >
                     <IconPlus />
                     New Room
                   </button>
@@ -458,7 +584,9 @@ export default function CliplinkApp() {
                       maxLength={6}
                       placeholder="Enter code"
                       value={joinCode}
-                      onChange={(event) => setJoinCode(normalizeRoomCode(event.target.value))}
+                      onChange={(event) =>
+                        setJoinCode(normalizeRoomCode(event.target.value))
+                      }
                       onKeyDown={(event) => {
                         if (event.key === "Enter") {
                           event.preventDefault();
@@ -476,7 +604,8 @@ export default function CliplinkApp() {
                   </div>
 
                   <p className="inline-note">
-                    No sign-up, no install, no saved history. Rooms expire after 6 hours of inactivity.
+                    No sign-up, no install, no saved history. Rooms expire after
+                    6 hours of inactivity.
                   </p>
                 </div>
               </section>
@@ -496,11 +625,19 @@ export default function CliplinkApp() {
                   </div>
 
                   <div className="room-actions">
-                    <button className="icon-btn" type="button" onClick={() => void shareRoom(roomCode!)}>
+                    <button
+                      className="icon-btn"
+                      type="button"
+                      onClick={() => void shareRoom(roomCode!)}
+                    >
                       <IconCopy />
                       Share Link
                     </button>
-                    <button className="icon-btn danger" type="button" onClick={leaveRoom}>
+                    <button
+                      className="icon-btn danger"
+                      type="button"
+                      onClick={leaveRoom}
+                    >
                       Leave
                     </button>
                   </div>
@@ -510,10 +647,18 @@ export default function CliplinkApp() {
                   <div className="panel-toolbar">
                     <span className="panel-label">Clipboard</span>
                     <div className="panel-tools">
-                      <button className="tool-btn" type="button" onClick={() => void pasteFromDevice()}>
+                      <button
+                        className="tool-btn"
+                        type="button"
+                        onClick={() => void pasteFromDevice()}
+                      >
                         Paste from device
                       </button>
-                      <button className="tool-btn" type="button" onClick={() => setEditorText("")}>
+                      <button
+                        className="tool-btn"
+                        type="button"
+                        onClick={() => setEditorText("")}
+                      >
                         Clear
                       </button>
                       <button
@@ -533,24 +678,35 @@ export default function CliplinkApp() {
                     placeholder="Type or paste anything here, then hit Send to sync it across devices..."
                     onChange={(event) => setEditorText(event.target.value)}
                   />
-                  <div className="char-count">{formatCharCount(editorText.length)}</div>
+                  <div className="char-count">
+                    {formatCharCount(editorText.length)}
+                  </div>
                 </div>
 
                 <div className="history-section">
                   <div className="section-label">History</div>
                   <div className="history-list">
                     {history.length === 0 ? (
-                      <div className="empty-state">No clips yet. Send something.</div>
+                      <div className="empty-state">
+                        No clips yet. Send something.
+                      </div>
                     ) : (
                       history.map((clip) => (
-                        <div key={clip.id} className={`history-item ${clip.direction}`}>
+                        <div
+                          key={clip.id}
+                          className={`history-item ${clip.direction}`}
+                        >
                           <div className="history-meta">
                             <span className="history-dir">
                               {clip.direction === "incoming" ? "↓ IN" : "↑ OUT"}
                             </span>
-                            <span className="history-time">{formatHistoryTime(clip.ts)}</span>
+                            <span className="history-time">
+                              {formatHistoryTime(clip.ts)}
+                            </span>
                           </div>
-                          <div className="history-text">{truncatePreview(clip.text)}</div>
+                          <div className="history-text">
+                            {truncatePreview(clip.text)}
+                          </div>
                           <button
                             className="history-copy"
                             type="button"
