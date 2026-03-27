@@ -168,6 +168,7 @@ export default function CliplinkApp() {
   const lastSeenIdRef = useRef(0);
   const roomCodeRef = useRef<RoomCode | null>(null);
   const pollingRef = useRef<number | null>(null);
+  const streamCleanupRef = useRef<(() => void) | null>(null);
   const syncResetRef = useRef<number | null>(null);
   const initializedRoomRef = useRef<string | null>(null);
 
@@ -213,6 +214,7 @@ export default function CliplinkApp() {
   useEffect(() => {
     return () => {
       stopPolling();
+      stopStream();
       clearSyncReset();
       transport.disconnect();
     };
@@ -291,11 +293,66 @@ export default function CliplinkApp() {
     }
   }
 
+  function stopStream() {
+    if (streamCleanupRef.current) {
+      const cleanup = streamCleanupRef.current;
+      streamCleanupRef.current = null;
+      cleanup();
+    }
+  }
+
   function startPolling(nextRoomCode: RoomCode) {
     stopPolling();
     pollingRef.current = window.setInterval(() => {
       void pollForUpdates(nextRoomCode);
     }, POLL_INTERVAL_MS);
+  }
+
+  function applyIncomingClips(clips: SessionClip[]) {
+    if (clips.length === 0) {
+      return;
+    }
+
+    setHistory((current) => mergeHistory(current, clips));
+    setStatus("live");
+    triggerFlash();
+    const latest = clips[0];
+    void autoCopyIncoming(latest.text);
+  }
+
+  function startRealtime(nextRoomCode: RoomCode) {
+    stopPolling();
+    stopStream();
+    const cleanup = transport.streamClips(nextRoomCode, lastSeenIdRef.current, {
+      onClips: (clips) => {
+        const incoming = clips
+          .filter((clip) => clip.senderId !== senderIdRef.current)
+          .map((clip) => ({
+            ...clip,
+            direction: "incoming" as const,
+          }));
+
+        for (const clip of clips) {
+          lastSeenIdRef.current = Math.max(lastSeenIdRef.current, clip.id);
+        }
+
+        applyIncomingClips(incoming.reverse());
+      },
+      onDisconnect: (reason) => {
+        streamCleanupRef.current = null;
+        if (reason === "error" && roomCodeRef.current === nextRoomCode) {
+          startPolling(nextRoomCode);
+          pushToast("Realtime connection dropped. Falling back to polling.", "info");
+        }
+      },
+    });
+
+    if (!cleanup) {
+      startPolling(nextRoomCode);
+      return;
+    }
+
+    streamCleanupRef.current = cleanup;
   }
 
   async function copyRoomLink(code: RoomCode) {
@@ -357,7 +414,7 @@ export default function CliplinkApp() {
       0,
     );
     updateUrl(nextRoomCode);
-    startPolling(nextRoomCode);
+    startRealtime(nextRoomCode);
   }
 
   async function createRoom() {
@@ -406,6 +463,7 @@ export default function CliplinkApp() {
 
   function leaveRoom() {
     stopPolling();
+    stopStream();
     clearSyncReset();
     transport.disconnect();
     setRoomCode(null);
@@ -444,11 +502,7 @@ export default function CliplinkApp() {
         direction: "incoming",
       }));
 
-      setHistory((current) => mergeHistory(current, additions));
-      setStatus("live");
-      triggerFlash();
-      const latest = incoming[incoming.length - 1];
-      await autoCopyIncoming(latest.text);
+      applyIncomingClips(additions.reverse());
     } catch (error) {
       setStatus("error");
       pushToast(

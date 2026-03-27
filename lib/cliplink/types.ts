@@ -52,6 +52,8 @@ export type PollClipsResponse = {
   clips: Clip[];
 };
 
+export type StreamDisconnectReason = "error" | "closed";
+
 export type TransportClient = {
   connect: (roomCode: RoomCode) => Promise<GetRoomResponse>;
   sendClip: (
@@ -59,5 +61,13 @@ export type TransportClient = {
     payload: CreateClipRequest,
   ) => Promise<CreateClipResponse>;
   pollClips: (roomCode: RoomCode, afterId: number) => Promise<PollClipsResponse>;
+  streamClips: (
+    roomCode: RoomCode,
+    afterId: number,
+    handlers: {
+      onClips: (clips: Clip[]) => void;
+      onDisconnect: (reason: StreamDisconnectReason) => void;
+    },
+  ) => (() => void) | null;
   disconnect: () => void;
 };

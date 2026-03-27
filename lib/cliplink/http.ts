@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  Clip,
   CreateClipRequest,
   CreateClipResponse,
   CreateRoomResponse,
@@ -21,6 +22,8 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export function createPollingTransport(): TransportClient {
+  let streamCleanup: (() => void) | null = null;
+
   return {
     async connect(roomCode: RoomCode) {
       const response = await fetch(`/rooms/${roomCode}`, {
@@ -47,7 +50,49 @@ export function createPollingTransport(): TransportClient {
       return parseResponse<PollClipsResponse>(response);
     },
 
-    disconnect() {},
+    streamClips(roomCode, afterId, handlers) {
+      if (typeof window === "undefined" || typeof EventSource === "undefined") {
+        return null;
+      }
+
+      streamCleanup?.();
+
+      const source = new EventSource(
+        `/rooms/${roomCode}/stream?after=${encodeURIComponent(String(afterId))}`,
+      );
+
+      const handleClip = (event: MessageEvent<string>) => {
+        try {
+          const clip = JSON.parse(event.data) as Clip;
+          handlers.onClips([clip]);
+        } catch {
+          handlers.onDisconnect("error");
+        }
+      };
+
+      const handleDisconnect = () => {
+        source.close();
+        handlers.onDisconnect("error");
+      };
+
+      source.addEventListener("clip", handleClip as EventListener);
+      source.onerror = handleDisconnect;
+
+      streamCleanup = () => {
+        source.removeEventListener("clip", handleClip as EventListener);
+        source.close();
+        streamCleanup = null;
+      };
+
+      return () => {
+        streamCleanup?.();
+        handlers.onDisconnect("closed");
+      };
+    },
+
+    disconnect() {
+      streamCleanup?.();
+    },
   };
 }
 

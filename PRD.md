@@ -1,7 +1,7 @@
 # CLIPLINK — Product Requirements Document
 
-**Version**: 1.2  
-**Status**: Implemented locally / pre-deploy  
+**Version**: 1.3  
+**Status**: M1 complete / M2 in progress  
 **Author**: bkht  
 **Date**: 2026-03-28  
 **Last Updated**: 2026-03-28
@@ -12,7 +12,7 @@
 
 CLIPLINK is a lightweight, zero-auth web service for syncing clipboard content across devices in real time. Users create a room, share a short code, and anything sent from one device is instantly available — and copied — on the other. No accounts, no install, no friction.
 
-This PRD now reflects both the original product intent and the current implementation status in the local codebase.
+This PRD now reflects both the original product intent and the current implementation status in the deployed codebase.
 
 ---
 
@@ -65,7 +65,7 @@ Copying a URL, snippet, or chunk of text from one device to another is annoying.
 
 ### 6.0 Current Implementation Status
 
-Implemented locally in the current codebase:
+Implemented and deployed:
 
 - Landing screen with create-room and join-by-code flows
 - Room entry via `?room=XXXXXX`
@@ -79,11 +79,15 @@ Implemented locally in the current codebase:
 - API routes for room creation, room fetch, clip creation, and polling
 - Session-local sender identity and session-local visible history
 - Basic per-IP clip rate limiting in the API layer
+- Cloudflare deployment via OpenNext
+- Cloudflare KV-backed room storage in production
+
+Started for M2:
+
+- SSE stream endpoint and client transport upgrade path
 
 Not yet implemented:
 
-- Cloudflare KV binding in deployment
-- SSE endpoint and transport
 - QR code sharing
 - Durable Object / WebSocket transport
 - End-to-end encryption
@@ -139,12 +143,12 @@ Not yet implemented:
 
 ### 7.2 Backend (v1 target)
 
-| Layer     | Current implementation                         | Target deployment                                |
-| --------- | ---------------------------------------------- | ------------------------------------------------ |
-| Runtime   | Next.js App Router route handlers              | Cloudflare Workers / Pages-compatible deployment |
-| Storage   | Storage adapter with in-memory fallback        | Cloudflare KV with TTL                           |
-| Transport | HTTP polling                                   | HTTP polling → SSE                               |
-| Hosting   | Local Next app                                 | Cloudflare Pages                                 |
+| Layer     | Current implementation                     | Notes                                           |
+| --------- | ------------------------------------------ | ----------------------------------------------- |
+| Runtime   | Next.js App Router via OpenNext            | Deployed to Cloudflare Workers                  |
+| Storage   | Cloudflare KV in production                 | In-memory fallback remains for local/dev        |
+| Transport | HTTP polling, SSE upgrade path in progress  | Polling is live; SSE work has started           |
+| Hosting   | Cloudflare Workers deployment               | OpenNext build/deploy pipeline is working       |
 
 ### 7.3 Data Model
 
@@ -166,7 +170,7 @@ type Clip = {
 
 Room TTL in KV: **6 hours** from last activity. Clips capped at 50 per room.
 
-Current local implementation note: the storage adapter already enforces clip caps and TTL semantics, but production persistence still requires a real Cloudflare KV binding.
+Current implementation note: the storage adapter enforces clip caps and TTL semantics locally and now uses a real Cloudflare KV binding in production.
 
 ### 7.4 API Routes
 
@@ -181,7 +185,7 @@ Current local implementation note: the storage adapter already enforces clip cap
 Current implementation status:
 
 - Implemented: `POST /rooms`, `GET /rooms/:code`, `POST /rooms/:code/clips`, `GET /rooms/:code/clips?after=:id`
-- Not yet implemented: `GET /rooms/:code/stream`
+- M2 in progress: `GET /rooms/:code/stream`
 
 ### 7.5 Transport upgrade path
 
@@ -298,23 +302,26 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 | Milestone          | Scope                                                                        | Target  |
 | ------------------ | ---------------------------------------------------------------------------- | ------- |
 | **M0** — Prototype | Single HTML file, localStorage backend, cross-tab sync                       | Done    |
-| **M1** — Alpha     | HTTP polling app flow, room APIs, deployable Cloudflare-backed MVP           | In progress |
+| **M1** — Alpha     | HTTP polling app flow, room APIs, deployable Cloudflare-backed MVP           | Complete |
 | **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | 2 weeks |
 | **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | 3 weeks |
 | **M4** — v2        | WebSocket via Durable Objects, E2E encryption option, file/image support     | TBD     |
 
-M1 implementation currently completed locally:
+M1 shipped:
 
 - Product UI migrated from prototype into the Next app
 - Polling-based room sync implemented
 - API surface implemented
 - Rate limiting implemented at a basic level
+- Cloudflare KV bound in production
+- OpenNext Cloudflare build/deploy pipeline working
+- Real cross-device production behavior validated sufficiently to ship M1
 
-Remaining work before M1 can be considered shipped:
+M2 work currently underway:
 
-- Bind storage to Cloudflare KV
-- Configure Cloudflare deployment
-- Smoke-test real cross-device production behavior
+- Add SSE stream endpoint
+- Add client-side SSE subscription with fallback to polling
+- Preserve the existing client transport abstraction so launch can move from polling to SSE without rewriting the room UI
 
 ---
 
