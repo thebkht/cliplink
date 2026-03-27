@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CLIPLINK — Cross-Device Clipboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111111;
+    --border: #1e1e1e;
+    --border-active: #333;
+    --accent: #e8ff3c;
+    --accent-dim: rgba(232, 255, 60, 0.12);
+    --text: #f0f0f0;
+    --text-muted: #555;
+    --text-dim: #888;
+    --danger: #ff4444;
+    --success: #3cff7a;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    overflow-x: hidden;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.4;
+  }
+
+  #app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Header */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+
+  .logo span {
+    color: var(--accent);
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: background 0.3s;
+  }
+
+  .status-dot.online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .status-dot.syncing { background: var(--accent); box-shadow: 0 0 6px var(--accent); animation: pulse 1s infinite; }
+  .status-dot.error { background: var(--danger); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* Main content */
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 60px 24px;
+  }
+
+  /* Landing screen */
+  #landing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 48px;
+    max-width: 480px;
+    width: 100%;
+  }
+
+  .hero {
+    text-align: center;
+  }
+
+  .hero h1 {
+    font-family: var(--display);
+    font-size: clamp(36px, 7vw, 64px);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -2px;
+    margin-bottom: 16px;
+  }
+
+  .hero h1 em {
+    font-style: normal;
+    color: var(--accent);
+    display: block;
+  }
+
+  .hero p {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    letter-spacing: 0.02em;
+  }
+
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 14px 24px;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+    text-transform: uppercase;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+  }
+
+  .btn-primary:hover {
+    background: #fff;
+    transform: translateY(-1px);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border-active);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-muted);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    width: 100%;
+  }
+
+  .divider::before, .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .join-form {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .code-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border-active);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    padding: 12px 16px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .code-input::placeholder { color: var(--text-muted); font-weight: 400; letter-spacing: 0.08em; font-size: 13px; }
+
+  .code-input:focus {
+    border-color: var(--accent);
+  }
+
+  /* Room screen */
+  #room {
+    display: none;
+    flex-direction: column;
+    gap: 24px;
+    width: 100%;
+    max-width: 700px;
+  }
+
+  #room.active { display: flex; }
+
+  .room-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0;
+  }
+
+  .room-code-display {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .room-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .room-code-badge {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    cursor: pointer;
+    border: 1px solid var(--accent-dim);
+    padding: 4px 12px;
+    border-radius: 2px;
+    transition: background 0.15s;
+  }
+
+  .room-code-badge:hover { background: var(--accent-dim); }
+
+  .room-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: transparent;
+    border: 1px solid var(--border-active);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .icon-btn:hover {
+    border-color: var(--text-dim);
+    color: var(--text);
+  }
+
+  .icon-btn.danger:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  /* Clipboard panel */
+  .clip-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .panel-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.02);
+  }
+
+  .panel-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .panel-tools {
+    display: flex;
+    gap: 6px;
+  }
+
+  .tool-btn {
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.12s;
+  }
+
+  .tool-btn:hover {
+    border-color: var(--border-active);
+    color: var(--text);
+  }
+
+  .tool-btn.accent {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+
+  .tool-btn.accent:hover {
+    background: #fff;
+    border-color: #fff;
+  }
+
+  textarea#editor {
+    width: 100%;
+    min-height: 220px;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 20px;
+    resize: vertical;
+    outline: none;
+  }
+
+  textarea#editor::placeholder { color: var(--text-muted); }
+
+  .char-count {
+    padding: 8px 16px;
+    font-size: 10px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    text-align: right;
+    letter-spacing: 0.06em;
+  }
+
+  /* History */
+  .history-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .section-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .history-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.12s;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .history-item:hover {
+    border-color: var(--border-active);
+    background: rgba(255,255,255,0.03);
+  }
+
+  .history-item.incoming {
+    border-left: 2px solid var(--accent);
+  }
+
+  .history-item.outgoing {
+    border-left: 2px solid var(--text-muted);
+  }
+
+  .history-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 60px;
+  }
+
+  .history-dir {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+  }
+
+  .history-item.incoming .history-dir { color: var(--accent); }
+
+  .history-time {
+    font-size: 9px;
+    color: var(--text-muted);
+  }
+
+  .history-text {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.5;
+  }
+
+  .history-copy {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 2px 6px;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.12s;
+    background: transparent;
+    font-family: var(--mono);
+    flex-shrink: 0;
+  }
+
+  .history-copy:hover {
+    border-color: var(--border-active);
+    color: var(--text);
+  }
+
+  /* Toast */
+  #toast {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface);
+    border: 1px solid var(--border-active);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    padding: 10px 20px;
+    border-radius: 3px;
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 999;
+    white-space: nowrap;
+  }
+
+  #toast.show {
+    transform: translateX(-50%) translateY(0);
+  }
+
+  #toast.success { border-color: var(--success); color: var(--success); }
+  #toast.info { border-color: var(--accent); color: var(--accent); }
+
+  /* Sync flash */
+  .sync-flash {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: var(--accent-dim);
+    opacity: 0;
+    z-index: 500;
+    transition: opacity 0.15s;
+  }
+
+  .sync-flash.flash {
+    opacity: 1;
+    transition: opacity 0s;
+  }
+
+  /* Empty state */
+  .empty {
+    text-align: center;
+    padding: 32px;
+    color: var(--text-muted);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+  }
+
+  /* Responsive */
+  @media (max-width: 500px) {
+    header { padding: 14px 20px; }
+    main { padding: 40px 16px; }
+    .room-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="logo">CLIP<span>LINK</span></div>
+    <div class="status-pill">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">OFFLINE</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Landing -->
+    <div id="landing">
+      <div class="hero">
+        <h1>Copy here.<em>Paste anywhere.</em></h1>
+        <p>Create a room. Share the code.<br>Your clipboard — synced instantly across devices.</p>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" onclick="createRoom()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+          New Room
+        </button>
+        <div class="divider">or join existing</div>
+        <div class="join-form">
+          <input class="code-input" id="joinCode" placeholder="Enter code" maxlength="6"
+            oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"
+            onkeydown="if(event.key==='Enter') joinRoom()">
+          <button class="btn btn-secondary" onclick="joinRoom()" style="flex-shrink:0;padding:12px 20px;">Join</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Room -->
+    <div id="room">
+      <div class="room-header">
+        <div class="room-code-display">
+          <span class="room-label">Room</span>
+          <div class="room-code-badge" id="roomCodeBadge" onclick="copyRoomLink()" title="Click to copy link"></div>
+        </div>
+        <div class="room-actions">
+          <button class="icon-btn" onclick="copyRoomLink()">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            Share Link
+          </button>
+          <button class="icon-btn danger" onclick="leaveRoom()">Leave</button>
+        </div>
+      </div>
+
+      <!-- Editor panel -->
+      <div class="clip-panel">
+        <div class="panel-toolbar">
+          <span class="panel-label">Clipboard</span>
+          <div class="panel-tools">
+            <button class="tool-btn" onclick="pasteFromDevice()">Paste from device</button>
+            <button class="tool-btn" onclick="clearEditor()">Clear</button>
+            <button class="tool-btn accent" id="sendBtn" onclick="sendClip()">Send ↑</button>
+          </div>
+        </div>
+        <textarea id="editor" placeholder="Type or paste anything here, then hit Send to sync it across devices…" oninput="updateCharCount()"></textarea>
+        <div class="char-count" id="charCount">0 chars</div>
+      </div>
+
+      <!-- History -->
+      <div class="history-section">
+        <div class="section-label">History</div>
+        <div class="history-list" id="historyList">
+          <div class="empty">No clips yet. Send something!</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="sync-flash" id="syncFlash"></div>
+<div id="toast"></div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────
+const state = {
+  roomCode: null,
+  history: [],      // { id, text, dir, ts }
+  pollTimer: null,
+  lastId: 0,
+  myId: Math.random().toString(36).slice(2, 10),
+};
+
+// Simulated "server" using localStorage as shared storage (works cross-tab)
+// For real cross-device: swap this with a tiny backend/WebSocket/Cloudflare KV
+const store = {
+  getRoomData(code) {
+    try { return JSON.parse(localStorage.getItem('cliplink:' + code) || '{"clips":[]}'); }
+    catch { return { clips: [] }; }
+  },
+  saveRoomData(code, data) {
+    localStorage.setItem('cliplink:' + code, JSON.stringify(data));
+    // Also broadcast a BroadcastChannel event for other tabs
+    try { ch.postMessage({ type: 'update', code }); } catch {}
+  },
+  addClip(code, text, senderId) {
+    const data = this.getRoomData(code);
+    const clip = { id: Date.now(), text, senderId, ts: Date.now() };
+    data.clips.unshift(clip);
+    if (data.clips.length > 50) data.clips = data.clips.slice(0, 50);
+    this.saveRoomData(code, data);
+    return clip;
+  },
+  getNewClips(code, afterId) {
+    const data = this.getRoomData(code);
+    return data.clips.filter(c => c.id > afterId);
+  }
+};
+
+// BroadcastChannel for same-origin cross-tab sync
+let ch;
+try {
+  ch = new BroadcastChannel('cliplink');
+  ch.onmessage = (e) => {
+    if (e.data.type === 'update' && e.data.code === state.roomCode) {
+      pollForUpdates(true);
+    }
+  };
+} catch {}
+
+// ─── Room management ────────────────────────────────────────────────────
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+function createRoom() {
+  const code = generateCode();
+  enterRoom(code);
+  toast('Room created!', 'success');
+}
+
+function joinRoom() {
+  const code = document.getElementById('joinCode').value.trim();
+  if (code.length < 4) { toast('Enter a valid room code', 'info'); return; }
+  enterRoom(code);
+}
+
+function enterRoom(code) {
+  state.roomCode = code;
+  state.history = [];
+  state.lastId = 0;
+
+  // Load existing history
+  const data = store.getRoomData(code);
+  if (data.clips.length > 0) {
+    state.lastId = data.clips[0].id;
+    data.clips.slice().reverse().forEach(c => {
+      addToHistory(c.text, c.senderId === state.myId ? 'outgoing' : 'incoming', c.id, c.ts);
+    });
+  }
+
+  document.getElementById('landing').style.display = 'none';
+  document.getElementById('room').classList.add('active');
+  document.getElementById('roomCodeBadge').textContent = code;
+
+  setStatus('online', 'LIVE');
+  startPolling();
+}
+
+function leaveRoom() {
+  stopPolling();
+  state.roomCode = null;
+  state.history = [];
+  state.lastId = 0;
+  document.getElementById('landing').style.display = '';
+  document.getElementById('room').classList.remove('active');
+  document.getElementById('historyList').innerHTML = '<div class="empty">No clips yet. Send something!</div>';
+  document.getElementById('editor').value = '';
+  document.getElementById('joinCode').value = '';
+  setStatus('', 'OFFLINE');
+}
+
+// ─── Sending ─────────────────────────────────────────────────────────────
+function sendClip() {
+  const text = document.getElementById('editor').value.trim();
+  if (!text) { toast('Nothing to send', 'info'); return; }
+
+  const clip = store.addClip(state.roomCode, text, state.myId);
+  state.lastId = Math.max(state.lastId, clip.id);
+  addToHistory(text, 'outgoing', clip.id, clip.ts);
+  document.getElementById('editor').value = '';
+  updateCharCount();
+
+  setStatus('syncing', 'SYNCING');
+  setTimeout(() => setStatus('online', 'LIVE'), 600);
+  toast('Sent!', 'success');
+}
+
+// ─── Receiving ───────────────────────────────────────────────────────────
+function startPolling() {
+  stopPolling();
+  state.pollTimer = setInterval(() => pollForUpdates(false), 1500);
+}
+
+function stopPolling() {
+  if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+
+function pollForUpdates(immediate) {
+  if (!state.roomCode) return;
+  const newClips = store.getNewClips(state.roomCode, state.lastId);
+  const incoming = newClips.filter(c => c.senderId !== state.myId);
+
+  if (incoming.length > 0) {
+    incoming.reverse().forEach(c => {
+      addToHistory(c.text, 'incoming', c.id, c.ts);
+      state.lastId = Math.max(state.lastId, c.id);
+    });
+
+    flashSync();
+    // Auto-copy latest to clipboard
+    navigator.clipboard.writeText(incoming[incoming.length - 1].text).catch(() => {});
+    toast(`Received ${incoming.length > 1 ? incoming.length + ' clips' : 'clip'} — copied!`, 'success');
+  }
+
+  const outgoing = newClips.filter(c => c.senderId === state.myId);
+  outgoing.forEach(c => { state.lastId = Math.max(state.lastId, c.id); });
+}
+
+// ─── History ─────────────────────────────────────────────────────────────
+function addToHistory(text, dir, id, ts) {
+  const list = document.getElementById('historyList');
+
+  // Remove empty state
+  const empty = list.querySelector('.empty');
+  if (empty) empty.remove();
+
+  const time = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const preview = text.length > 120 ? text.slice(0, 120) + '…' : text;
+
+  const item = document.createElement('div');
+  item.className = `history-item ${dir}`;
+  item.dataset.id = id;
+  item.innerHTML = `
+    <div class="history-meta">
+      <span class="history-dir">${dir === 'incoming' ? '↓ IN' : '↑ OUT'}</span>
+      <span class="history-time">${time}</span>
+    </div>
+    <div class="history-text">${escapeHtml(preview)}</div>
+    <button class="history-copy" onclick="copyItem(event, ${JSON.stringify(text)})">copy</button>
+  `;
+
+  // Insert at top
+  list.insertBefore(item, list.firstChild);
+
+  // Limit to 20 visible
+  const items = list.querySelectorAll('.history-item');
+  if (items.length > 20) items[items.length - 1].remove();
+}
+
+function copyItem(e, text) {
+  e.stopPropagation();
+  navigator.clipboard.writeText(text).then(() => {
+    e.target.textContent = '✓';
+    setTimeout(() => e.target.textContent = 'copy', 1500);
+  });
+}
+
+// ─── Utilities ───────────────────────────────────────────────────────────
+async function pasteFromDevice() {
+  try {
+    const text = await navigator.clipboard.readText();
+    document.getElementById('editor').value = text;
+    updateCharCount();
+  } catch {
+    toast('Clipboard access denied — paste manually (⌘V)', 'info');
+  }
+}
+
+function clearEditor() {
+  document.getElementById('editor').value = '';
+  updateCharCount();
+}
+
+function copyRoomLink() {
+  const url = `${location.href}?room=${state.roomCode}`;
+  navigator.clipboard.writeText(url).then(() => toast('Room link copied!', 'success'));
+}
+
+function updateCharCount() {
+  const len = document.getElementById('editor').value.length;
+  document.getElementById('charCount').textContent = `${len.toLocaleString()} char${len !== 1 ? 's' : ''}`;
+}
+
+function setStatus(cls, text) {
+  const dot = document.getElementById('statusDot');
+  const label = document.getElementById('statusText');
+  dot.className = 'status-dot ' + cls;
+  label.textContent = text;
+}
+
+function flashSync() {
+  const el = document.getElementById('syncFlash');
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 300);
+}
+
+let toastTimer;
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 2500);
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Init ────────────────────────────────────────────────────────────────
+// Auto-join if URL has ?room=CODE
+const urlRoom = new URLSearchParams(location.search).get('room');
+if (urlRoom) {
+  enterRoom(urlRoom.toUpperCase());
+  toast('Joined room from link', 'success');
+}
+
+// Keyboard shortcut: Ctrl+Enter to send
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && state.roomCode) sendClip();
+});
+</script>
+</body>
+</html>

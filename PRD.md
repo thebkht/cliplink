@@ -1,0 +1,286 @@
+# CLIPLINK — Product Requirements Document
+
+**Version**: 1.1  
+**Status**: Draft  
+**Author**: bkht  
+**Date**: 2026-03-28
+
+---
+
+## 1. Overview
+
+CLIPLINK is a lightweight, zero-auth web service for syncing clipboard content across devices in real time. Users create a room, share a short code, and anything sent from one device is instantly available — and copied — on the other. No accounts, no install, no friction.
+
+---
+
+## 2. Problem
+
+Copying a URL, snippet, or chunk of text from one device to another is annoying. The common workarounds — emailing yourself, using Notes, texting yourself, AirDrop (Apple-only) — are all either slow, platform-locked, or require effort disproportionate to the task. There is no fast, universal, open-in-browser solution.
+
+---
+
+## 3. Goals
+
+- Sync clipboard content between any two (or more) devices in under 500ms
+- Require zero sign-up, zero install
+- Work on any device with a modern browser
+- Be shareable via a link or a 6-character room code
+
+### Non-goals (v1)
+
+- End-to-end encryption (planned for v2)
+- File/image transfer
+- Persistent history across sessions
+- Mobile native apps
+
+---
+
+## 4. Users
+
+**Primary**: Developers, power users, and anyone who regularly works across multiple devices (laptop + phone, two laptops, desktop + tablet).
+
+**Secondary**: Anyone sharing a link or snippet with someone else in the same physical space — a fast, frictionless alternative to "just send it to me on Slack."
+
+---
+
+## 5. User Stories
+
+| #   | Story                                                                               |
+| --- | ----------------------------------------------------------------------------------- |
+| 1   | As a user, I can create a new room instantly without signing up                     |
+| 2   | As a user, I can join a room by entering a 6-character code                         |
+| 3   | As a user, I can join a room by opening a shared URL                                |
+| 4   | As a user, content I send is immediately available on all other devices in the room |
+| 5   | As a user, incoming content is automatically copied to my clipboard                 |
+| 6   | As a user, I can see a history of clips sent in the current session                 |
+| 7   | As a user, I can copy any previous clip from history with one click                 |
+| 8   | As a user, I can share the room link directly from within the app                   |
+
+---
+
+## 6. Features
+
+### 6.1 Rooms
+
+- Rooms are identified by a randomly generated 6-character alphanumeric code (e.g. `X7KP2M`)
+- Rooms are ephemeral — no persistence beyond the session by default
+- Any number of devices can join the same room
+- No authentication required to create or join a room
+- Rooms are accessible via `cliplink.app/?room=X7KP2M`
+
+### 6.2 Send
+
+- Users type or paste content into the editor
+- Clicking **Send** (or pressing `Cmd/Ctrl + Enter`) broadcasts the clip to all peers in the room
+- A "Paste from device" button pulls current clipboard content into the editor
+- Character count is shown live
+
+### 6.3 Receive
+
+- Incoming clips are displayed in the history panel with direction indicator (↓ IN) and timestamp
+- The latest incoming clip is automatically copied to the device clipboard (with browser permission)
+- A subtle full-screen flash and toast notification confirms receipt
+- History is limited to the last 20 clips in the current session
+
+### 6.4 History
+
+- Each clip shows: direction (IN / OUT), timestamp, truncated preview, and a one-click copy button
+- History is local to the session — cleared on page reload or room leave
+- Outgoing clips are marked ↑ OUT; incoming are marked ↓ IN
+
+### 6.5 Sharing
+
+- Room code is always visible and clickable to copy the room link
+- Shareable URL format: `cliplink.app/?room=XXXXXX`
+- Visiting the URL directly drops the user into the room
+
+---
+
+## 7. Technical Architecture
+
+### 7.1 Frontend
+
+- Single HTML file, no framework dependency for v1
+- BroadcastChannel API for same-browser cross-tab sync
+- Navigator Clipboard API for auto-copy on receive
+- Polling at 1.5s intervals for cross-device sync (M1)
+- Upgrades to SSE in M2, then WebSocket in M4 — same client interface, transport swapped underneath
+
+### 7.2 Backend (v1 target)
+
+| Layer     | Choice             | Rationale                                       |
+| --------- | ------------------ | ----------------------------------------------- |
+| Runtime   | Cloudflare Workers | Edge, zero cold start, global                   |
+| Storage   | Cloudflare KV      | Fast reads, built-in TTL for ephemeral rooms    |
+| Transport | HTTP polling → SSE | Simplest viable path; SSE upgrade before launch |
+| Hosting   | Cloudflare Pages   | Single file deploy, same edge network           |
+
+### 7.3 Data Model
+
+```ts
+// Room stored in KV under key: `room:{code}`
+type Room = {
+  code: string;
+  createdAt: number;
+  clips: Clip[];
+};
+
+type Clip = {
+  id: number; // timestamp-based
+  text: string;
+  senderId: string; // anonymous random ID per session
+  ts: number;
+};
+```
+
+Room TTL in KV: **6 hours** from last activity. Clips capped at 50 per room.
+
+### 7.4 API Routes
+
+| Method | Route                          | Description                             |
+| ------ | ------------------------------ | --------------------------------------- |
+| `POST` | `/rooms`                       | Create a new room, returns `{ code }`   |
+| `GET`  | `/rooms/:code`                 | Get room data                           |
+| `POST` | `/rooms/:code/clips`           | Send a new clip                         |
+| `GET`  | `/rooms/:code/clips?after=:id` | Poll for new clips since `id`           |
+| `GET`  | `/rooms/:code/stream`          | SSE stream for real-time updates (v1.1) |
+
+### 7.5 Transport upgrade path
+
+The transport layer evolves in three stages. The client interface stays the same across all three — only the underlying connection mechanism changes.
+
+```
+M1  →  HTTP polling      (1.5s interval, stateless Workers + KV)
+M2  →  SSE              (real-time push, still stateless Workers)
+M4  →  WebSockets       (full-duplex, Cloudflare Durable Objects)
+```
+
+#### Stage 1 — HTTP Polling (M1)
+
+Client polls `GET /rooms/:code/clips?after=:id` every 1.5 seconds. Simple, stateless, works with plain KV. Latency: up to 1.5s.
+
+#### Stage 2 — Server-Sent Events (M2)
+
+SSE is a long-lived HTTP GET that allows the server to push events to the client. It fits CLIPLINK's asymmetric model cleanly:
+
+- Clips are **sent** via `POST /rooms/:code/clips` (client → server, unchanged)
+- New clips are **pushed** via `GET /rooms/:code/stream` SSE stream (server → client)
+
+SSE works with stateless Cloudflare Workers using a `TransformStream`. No Durable Objects needed. The Worker holds the stream open and flushes a new event whenever a clip is written to KV (polled internally at ~200ms or triggered via KV notification). Latency: ~200–300ms.
+
+```ts
+// Worker SSE handler sketch
+return new Response(readable, {
+  headers: {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  },
+});
+```
+
+SSE reconnects automatically on drop (built into the browser `EventSource` API). This is the recommended transport for launch.
+
+#### Stage 3 — WebSockets via Durable Objects (M4)
+
+When usage justifies it, WebSockets replace SSE for true full-duplex, sub-100ms delivery.
+
+```
+Browser A ──WS──┐
+Browser B ──WS──┤── Durable Object (room:X7KP2M) ──── KV (persistence)
+Browser C ──WS──┘
+```
+
+Each room maps to a single **Durable Object** instance, co-located at one edge node globally. All devices in that room maintain a persistent WebSocket connection to that DO. When a clip arrives, the DO broadcasts it to all connected sockets in a single loop — no polling, no KV read on receive.
+
+```ts
+// DO broadcast sketch
+async broadcast(clip: Clip) {
+  for (const [id, socket] of this.sessions) {
+    socket.send(JSON.stringify({ type: 'clip', data: clip }));
+  }
+}
+```
+
+Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request + duration — negligible at low scale, non-trivial at high concurrency. Defer until polling/SSE becomes a bottleneck.
+
+#### Comparison
+
+|                 | Polling       | SSE            | WebSocket         |
+| --------------- | ------------- | -------------- | ----------------- |
+| Latency         | ~750ms avg    | ~200ms         | ~50ms             |
+| Infrastructure  | Workers + KV  | Workers + KV   | Workers + KV + DO |
+| Complexity      | Low           | Medium         | High              |
+| Stateful server | No            | No             | Yes (DO)          |
+| Full-duplex     | No            | No             | Yes               |
+| Browser support | Universal     | Universal      | Universal         |
+| Recommended for | M1 (validate) | M2–M3 (launch) | M4 (scale)        |
+
+---
+
+## 8. Security & Privacy
+
+- Room codes are randomly generated with ~40 bits of entropy — guessing is not practical
+- No user data is stored; `senderId` is a random string generated client-side per session
+- Rooms and clips expire automatically via KV TTL
+- No logs retained beyond Cloudflare's default request logging
+- HTTPS enforced at the edge
+- v2 consideration: optional end-to-end encryption using WebCrypto, key derived from room code + user passphrase
+
+---
+
+## 9. Performance Targets
+
+| Metric                               | Target                   | Transport |
+| ------------------------------------ | ------------------------ | --------- |
+| Clip delivery latency (same region)  | < 200ms                  | SSE       |
+| Clip delivery latency (same region)  | < 80ms                   | WebSocket |
+| Clip delivery latency (cross-region) | < 500ms                  | SSE       |
+| Clip delivery latency (cross-region) | < 150ms                  | WebSocket |
+| Page load (cold)                     | < 1s on 3G               | —         |
+| Worker cold start                    | 0ms (Cloudflare)         | —         |
+| Time to first room                   | < 3s including page load | —         |
+
+---
+
+## 10. UX Requirements
+
+- No modals, no onboarding, no tooltips — the interface is self-evident
+- One primary action per screen (Create Room on landing; Send on room view)
+- Confirmation of all async actions via toast (never silent)
+- Works without clipboard permission granted (manual copy fallback)
+- Room code badge always visible, always one click to copy the link
+- Mobile-responsive at all breakpoints
+
+---
+
+## 11. Milestones
+
+| Milestone          | Scope                                                                        | Target  |
+| ------------------ | ---------------------------------------------------------------------------- | ------- |
+| **M0** — Prototype | Single HTML file, localStorage backend, cross-tab sync                       | Done    |
+| **M1** — Alpha     | Cloudflare Worker + KV, HTTP polling, deployed URL                           | 1 week  |
+| **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | 2 weeks |
+| **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | 3 weeks |
+| **M4** — v2        | WebSocket via Durable Objects, E2E encryption option, file/image support     | TBD     |
+
+---
+
+## 12. Open Questions
+
+- Should rooms support a passphrase for access control, or is code-based access sufficient for v1?
+- What's the right room TTL? 6 hours vs. 24 hours vs. "until last device leaves"
+- Rate limit per IP on clip creation? (suggested: 60 clips/min/IP)
+- Should the room creator have any elevated permissions (e.g. ability to clear history)?
+- When does SSE become a bottleneck? Define the concurrency threshold that triggers the DO/WebSocket migration (suggested: >500 concurrent rooms)
+
+---
+
+## 13. Out of Scope (v1)
+
+- Accounts, authentication, or persistent history
+- File or image transfer
+- Syntax highlighting or rich text
+- Mobile native apps (iOS / Android)
+- End-to-end encryption
+- Collaborative editing (not a doc editor)
