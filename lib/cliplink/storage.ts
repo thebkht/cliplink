@@ -3,6 +3,7 @@ import {
   RATE_LIMIT_WINDOW_MS,
   ROOM_TTL_SECONDS,
 } from "@/lib/cliplink/constants";
+import { getOptionalCloudflareEnv } from "@/lib/cliplink/workers";
 import { generateRoomCode } from "@/lib/cliplink/room-code";
 import type { Clip, Room } from "@/lib/cliplink/types";
 
@@ -48,7 +49,8 @@ function getMemoryStore() {
 }
 
 function getKvStore() {
-  return globalThis.CLIPLINK_KV ?? null;
+  const env = getOptionalCloudflareEnv();
+  return env?.CLIPLINK_ROOMS ?? globalThis.CLIPLINK_KV ?? null;
 }
 
 async function getRecord(key: string) {

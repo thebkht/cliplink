@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "cliplink",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-03-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CLIPLINK_ROOMS",
+      "id": "00000000000000000000000000000000",
+      "preview_id": "11111111111111111111111111111111"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
