@@ -55,7 +55,7 @@ export async function GET(
             controller.enqueue(
               encoder.encode(
                 eventChunk(
-                  "error",
+                  "stream-error",
                   JSON.stringify({ code: "room_not_found" }),
                 ),
               ),
@@ -78,7 +78,7 @@ export async function GET(
           controller.enqueue(
             encoder.encode(
               eventChunk(
-                "error",
+                "stream-error",
                 JSON.stringify({ code: "stream_failed" }),
               ),
             ),

@@ -1,7 +1,7 @@
 # CLIPLINK — Product Requirements Document
 
-**Version**: 1.3  
-**Status**: M1 complete / M2 in progress  
+**Version**: 1.4  
+**Status**: M2 complete  
 **Author**: bkht  
 **Date**: 2026-03-28  
 **Last Updated**: 2026-03-28
@@ -75,20 +75,18 @@ Implemented and deployed:
 - "Paste from device" clipboard read action
 - History list with `↑ OUT` / `↓ IN`, timestamps, preview, and one-click copy
 - Toast notifications and subtle full-screen receive flash
-- HTTP polling transport at 1.5s
+- HTTP polling transport at 1.5s fallback
 - API routes for room creation, room fetch, clip creation, and polling
 - Session-local sender identity and session-local visible history
 - Basic per-IP clip rate limiting in the API layer
 - Cloudflare deployment via OpenNext
 - Cloudflare KV-backed room storage in production
-
-Started for M2:
-
-- SSE stream endpoint and client transport upgrade path
+- SSE realtime stream with polling fallback and reconnect behavior
+- QR code sharing from the room view
+- Mobile-responsive landing and room layouts
 
 Not yet implemented:
 
-- QR code sharing
 - Durable Object / WebSocket transport
 - End-to-end encryption
 
@@ -126,6 +124,7 @@ Not yet implemented:
 
 - Room code is always visible and clickable to copy the room link
 - Shareable URL format: `cliplink.app/?room=XXXXXX`
+- In-room QR code sharing is available for handoff between devices
 - Visiting the URL directly drops the user into the room
 
 ---
@@ -137,8 +136,9 @@ Not yet implemented:
 - Next.js 16 App Router application
 - Interactive room experience implemented as a client component
 - Navigator Clipboard API for auto-copy on receive
-- Polling at 1.5s intervals for cross-device sync (current M1 implementation)
-- Transport abstraction is in place so polling can be replaced by SSE in M2 and WebSockets in M4 without rewriting the room UI
+- SSE is the primary realtime transport in the deployed app
+- HTTP polling remains in place as the fallback transport and compatibility layer
+- Transport abstraction is in place so SSE can later be replaced by WebSockets in M4 without rewriting the room UI
 - M0 prototype remains in `prototype.html` as the original single-file reference
 
 ### 7.2 Backend (v1 target)
@@ -147,7 +147,7 @@ Not yet implemented:
 | --------- | ------------------------------------------ | ----------------------------------------------- |
 | Runtime   | Next.js App Router via OpenNext            | Deployed to Cloudflare Workers                  |
 | Storage   | Cloudflare KV in production                 | In-memory fallback remains for local/dev        |
-| Transport | HTTP polling, SSE upgrade path in progress  | Polling is live; SSE work has started           |
+| Transport | SSE with polling fallback                   | SSE is live; polling remains for resilience     |
 | Hosting   | Cloudflare Workers deployment               | OpenNext build/deploy pipeline is working       |
 
 ### 7.3 Data Model
@@ -184,8 +184,7 @@ Current implementation note: the storage adapter enforces clip caps and TTL sema
 
 Current implementation status:
 
-- Implemented: `POST /rooms`, `GET /rooms/:code`, `POST /rooms/:code/clips`, `GET /rooms/:code/clips?after=:id`
-- M2 in progress: `GET /rooms/:code/stream`
+- Implemented: `POST /rooms`, `GET /rooms/:code`, `POST /rooms/:code/clips`, `GET /rooms/:code/clips?after=:id`, `GET /rooms/:code/stream`
 
 ### 7.5 Transport upgrade path
 
@@ -221,7 +220,7 @@ return new Response(readable, {
 });
 ```
 
-SSE reconnects automatically on drop (built into the browser `EventSource` API). This is the recommended transport for launch.
+SSE reconnects automatically on drop (built into the browser `EventSource` API), and the client falls back to polling while retrying the stream. This is the current launch transport.
 
 #### Stage 3 — WebSockets via Durable Objects (M4)
 
@@ -303,7 +302,7 @@ Latency: ~50–80ms cross-device. Cost: Durable Objects are billed per request +
 | ------------------ | ---------------------------------------------------------------------------- | ------- |
 | **M0** — Prototype | Single HTML file, localStorage backend, cross-tab sync                       | Done    |
 | **M1** — Alpha     | HTTP polling app flow, room APIs, deployable Cloudflare-backed MVP           | Complete |
-| **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | 2 weeks |
+| **M2** — Beta      | SSE for real-time push, mobile polish, QR code for room link                 | Complete |
 | **M3** — Launch    | Custom domain, rate limiting, abuse protection, optional room expiry control | 3 weeks |
 | **M4** — v2        | WebSocket via Durable Objects, E2E encryption option, file/image support     | TBD     |
 
@@ -317,11 +316,12 @@ M1 shipped:
 - OpenNext Cloudflare build/deploy pipeline working
 - Real cross-device production behavior validated sufficiently to ship M1
 
-M2 work currently underway:
+M2 shipped:
 
-- Add SSE stream endpoint
-- Add client-side SSE subscription with fallback to polling
-- Preserve the existing client transport abstraction so launch can move from polling to SSE without rewriting the room UI
+- SSE stream endpoint added and deployed
+- Client-side SSE subscription added with polling fallback and retry behavior
+- QR code sharing added to the room view
+- Mobile layout tightened for landing and in-room flows
 
 ---
 

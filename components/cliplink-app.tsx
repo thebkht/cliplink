@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -109,6 +110,23 @@ function IconCopy() {
   );
 }
 
+function IconQr() {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 4H10V10H4V4ZM14 4H20V10H14V4ZM4 14H10V20H4V14ZM15 15H17V17H15V15ZM17 17H20V20H17V17ZM14 18H16V20H14V18ZM18 14H20V16H18V14ZM14 11H16V14H14V11ZM11 11H13V13H11V11Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 function IconTheme({ theme }: { theme: ThemeMode }) {
   if (theme === "light") {
     return (
@@ -163,6 +181,7 @@ export default function CliplinkApp() {
   const [flashActive, setFlashActive] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [theme, setTheme] = useState<ThemeMode>("dark");
+  const [showQrSheet, setShowQrSheet] = useState(false);
 
   const senderIdRef = useRef("");
   const lastSeenIdRef = useRef(0);
@@ -171,6 +190,8 @@ export default function CliplinkApp() {
   const streamCleanupRef = useRef<(() => void) | null>(null);
   const syncResetRef = useRef<number | null>(null);
   const initializedRoomRef = useRef<string | null>(null);
+  const realtimeRetryRef = useRef<number | null>(null);
+  const realtimeRetryCountRef = useRef(0);
 
   useEffect(() => {
     senderIdRef.current = getSessionSenderId();
@@ -216,6 +237,7 @@ export default function CliplinkApp() {
       stopPolling();
       stopStream();
       clearSyncReset();
+      clearRealtimeRetry();
       transport.disconnect();
     };
   }, []);
@@ -260,6 +282,13 @@ export default function CliplinkApp() {
 
   function toggleTheme() {
     setTheme((current) => (current === "dark" ? "light" : "dark"));
+  }
+
+  function clearRealtimeRetry() {
+    if (realtimeRetryRef.current) {
+      window.clearTimeout(realtimeRetryRef.current);
+      realtimeRetryRef.current = null;
+    }
   }
 
   function clearSyncReset() {
@@ -308,6 +337,18 @@ export default function CliplinkApp() {
     }, POLL_INTERVAL_MS);
   }
 
+  function scheduleRealtimeRetry(nextRoomCode: RoomCode) {
+    clearRealtimeRetry();
+    const attempt = realtimeRetryCountRef.current;
+    const delay = Math.min(15_000, 2_000 * 2 ** attempt);
+    realtimeRetryRef.current = window.setTimeout(() => {
+      realtimeRetryRef.current = null;
+      if (roomCodeRef.current === nextRoomCode && !streamCleanupRef.current) {
+        startRealtime(nextRoomCode);
+      }
+    }, delay);
+  }
+
   function applyIncomingClips(clips: SessionClip[]) {
     if (clips.length === 0) {
       return;
@@ -323,7 +364,12 @@ export default function CliplinkApp() {
   function startRealtime(nextRoomCode: RoomCode) {
     stopPolling();
     stopStream();
+    clearRealtimeRetry();
     const cleanup = transport.streamClips(nextRoomCode, lastSeenIdRef.current, {
+      onOpen: () => {
+        realtimeRetryCountRef.current = 0;
+        setStatus("live");
+      },
       onClips: (clips) => {
         const incoming = clips
           .filter((clip) => clip.senderId !== senderIdRef.current)
@@ -342,7 +388,12 @@ export default function CliplinkApp() {
         streamCleanupRef.current = null;
         if (reason === "error" && roomCodeRef.current === nextRoomCode) {
           startPolling(nextRoomCode);
-          pushToast("Realtime connection dropped. Falling back to polling.", "info");
+          realtimeRetryCountRef.current += 1;
+          scheduleRealtimeRetry(nextRoomCode);
+          pushToast(
+            "Realtime connection dropped. Falling back to polling.",
+            "info",
+          );
         }
       },
     });
@@ -386,6 +437,14 @@ export default function CliplinkApp() {
     }
   }
 
+  function openQrSheet() {
+    setShowQrSheet(true);
+  }
+
+  function closeQrSheet() {
+    setShowQrSheet(false);
+  }
+
   async function autoCopyIncoming(text: string) {
     try {
       await writeClipboard(text);
@@ -397,7 +456,7 @@ export default function CliplinkApp() {
 
   async function hydrateRoom(nextRoomCode: RoomCode) {
     const response = await transport.connect(nextRoomCode);
-    const nextHistory = sortClipsNewestFirst(
+    let nextHistory = sortClipsNewestFirst(
       response.clips.map((clip) => ({
         ...clip,
         direction:
@@ -405,14 +464,35 @@ export default function CliplinkApp() {
       })),
     ).slice(0, MAX_SESSION_HISTORY);
 
+    let lastSeenId = response.clips.reduce(
+      (highest, clip) => Math.max(highest, clip.id),
+      0,
+    );
+
+    try {
+      const bootstrapDelta = await transport.pollClips(nextRoomCode, lastSeenId);
+      if (bootstrapDelta.clips.length > 0) {
+        const additions: SessionClip[] = bootstrapDelta.clips.map((clip) => ({
+          ...clip,
+          direction:
+            clip.senderId === senderIdRef.current ? "outgoing" : "incoming",
+        }));
+        nextHistory = mergeHistory(nextHistory, additions);
+        lastSeenId = bootstrapDelta.clips.reduce(
+          (highest, clip) => Math.max(highest, clip.id),
+          lastSeenId,
+        );
+      }
+    } catch {
+      // Ignore bootstrap delta errors and fall back to the initial snapshot.
+    }
+
     setRoomCode(nextRoomCode);
     setHistory(nextHistory);
     setStatus("live");
     setEditorText("");
-    lastSeenIdRef.current = response.clips.reduce(
-      (highest, clip) => Math.max(highest, clip.id),
-      0,
-    );
+    setShowQrSheet(false);
+    lastSeenIdRef.current = lastSeenId;
     updateUrl(nextRoomCode);
     startRealtime(nextRoomCode);
   }
@@ -470,8 +550,11 @@ export default function CliplinkApp() {
     setHistory([]);
     setEditorText("");
     setJoinCode("");
+    setShowQrSheet(false);
     setStatus("offline");
     lastSeenIdRef.current = 0;
+    realtimeRetryCountRef.current = 0;
+    clearRealtimeRetry();
     updateUrl(null);
     pushToast("Left room.", "info");
   }
@@ -573,6 +656,15 @@ export default function CliplinkApp() {
   }
 
   const joined = Boolean(roomCode);
+  const roomShareUrl = roomCode
+    ? buildRoomUrl(
+        roomCode,
+        typeof window !== "undefined" ? window.location.href : "",
+      )
+    : "";
+  const qrCodeUrl = roomShareUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=0&data=${encodeURIComponent(roomShareUrl)}`
+    : "";
 
   return (
     <>
@@ -688,6 +780,14 @@ export default function CliplinkApp() {
                       Share Link
                     </button>
                     <button
+                      className="icon-btn"
+                      type="button"
+                      onClick={openQrSheet}
+                    >
+                      <IconQr />
+                      QR
+                    </button>
+                    <button
                       className="icon-btn danger"
                       type="button"
                       onClick={leaveRoom}
@@ -780,6 +880,69 @@ export default function CliplinkApp() {
       </div>
 
       <div className={`screen-flash ${flashActive ? "active" : ""}`} />
+
+      {joined && showQrSheet ? (
+        <div
+          className="overlay-backdrop"
+          role="presentation"
+          onClick={closeQrSheet}
+        >
+          <div
+            className="qr-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Room QR code"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="qr-sheet-header">
+              <div>
+                <p className="qr-sheet-kicker">Scan to join</p>
+                <h2>{roomCode}</h2>
+              </div>
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={closeQrSheet}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="qr-frame">
+              <Image
+                src={qrCodeUrl}
+                alt={`QR code for room ${roomCode}`}
+                width={280}
+                height={280}
+                unoptimized
+              />
+            </div>
+
+            <p className="qr-sheet-note">
+              Scan this code or copy the link to open the room instantly on
+              another device.
+            </p>
+
+            <div className="qr-sheet-actions">
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => void copyRoomLink(roomCode!)}
+              >
+                Copy Link
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => void shareRoom(roomCode!)}
+              >
+                Share
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="toast-stack" aria-live="polite">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast ${toast.tone}`}>

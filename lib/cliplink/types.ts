@@ -65,6 +65,7 @@ export type TransportClient = {
     roomCode: RoomCode,
     afterId: number,
     handlers: {
+      onOpen?: () => void;
       onClips: (clips: Clip[]) => void;
       onDisconnect: (reason: StreamDisconnectReason) => void;
     },

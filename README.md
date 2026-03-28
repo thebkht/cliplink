@@ -33,4 +33,4 @@ npm run build:worker
 npm run deploy:worker
 ```
 
-The app currently ships M1 polling transport and has begun the M2 SSE upgrade path.
+The app now ships M2: SSE realtime transport with polling fallback, QR room sharing, and mobile-responsive room flows.

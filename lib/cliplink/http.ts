@@ -60,26 +60,40 @@ export function createPollingTransport(): TransportClient {
       const source = new EventSource(
         `/rooms/${roomCode}/stream?after=${encodeURIComponent(String(afterId))}`,
       );
+      let isClosed = false;
 
       const handleClip = (event: MessageEvent<string>) => {
         try {
           const clip = JSON.parse(event.data) as Clip;
           handlers.onClips([clip]);
         } catch {
+          if (!isClosed) {
+            handlers.onDisconnect("error");
+          }
+        }
+      };
+
+      const handleStreamError = () => {
+        source.close();
+        if (!isClosed) {
           handlers.onDisconnect("error");
         }
       };
 
-      const handleDisconnect = () => {
-        source.close();
-        handlers.onDisconnect("error");
+      const handleOpen = () => {
+        handlers.onOpen?.();
       };
 
       source.addEventListener("clip", handleClip as EventListener);
-      source.onerror = handleDisconnect;
+      source.addEventListener("open", handleOpen as EventListener);
+      source.addEventListener("stream-error", handleStreamError as EventListener);
+      source.onerror = handleStreamError;
 
       streamCleanup = () => {
+        isClosed = true;
         source.removeEventListener("clip", handleClip as EventListener);
+        source.removeEventListener("open", handleOpen as EventListener);
+        source.removeEventListener("stream-error", handleStreamError as EventListener);
         source.close();
         streamCleanup = null;
       };
