@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTheme } from "next-themes";
 
 import {
   MAX_SESSION_HISTORY,
@@ -19,6 +20,7 @@ import { buildRoomUrl, normalizeRoomCode } from "@/lib/cliplink/room-code";
 import { getSessionSenderId } from "@/lib/cliplink/session";
 import type { RoomCode, RoomStatus, SessionClip } from "@/lib/cliplink/types";
 import { validateRoomCode } from "@/lib/cliplink/validation";
+import { cn } from "@/lib/utils";
 
 type ToastTone = "success" | "info" | "error";
 
@@ -28,10 +30,11 @@ type ToastItem = {
   tone: ToastTone;
 };
 
-type ThemeMode = "dark" | "light";
-
 const transport = createPollingTransport();
-const THEME_STORAGE_KEY = "cliplink:theme";
+
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
 
 function sortClipsNewestFirst(clips: SessionClip[]) {
   return [...clips].sort((left, right) => right.id - left.id);
@@ -127,7 +130,7 @@ function IconQr() {
   );
 }
 
-function IconTheme({ theme }: { theme: ThemeMode }) {
+function IconTheme({ theme }: { theme: "dark" | "light" }) {
   if (theme === "light") {
     return (
       <svg
@@ -180,8 +183,10 @@ export default function CliplinkApp() {
   const [isBusy, setIsBusy] = useState(false);
   const [flashActive, setFlashActive] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [theme, setTheme] = useState<ThemeMode>("dark");
   const [showQrSheet, setShowQrSheet] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  const { resolvedTheme, setTheme } = useTheme();
 
   const senderIdRef = useRef("");
   const lastSeenIdRef = useRef(0);
@@ -198,20 +203,8 @@ export default function CliplinkApp() {
   }, []);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark") {
-      setTheme(stored);
-      document.documentElement.dataset.theme = stored;
-      return;
-    }
-
-    document.documentElement.dataset.theme = "dark";
+    setMounted(true);
   }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
 
   useEffect(() => {
     roomCodeRef.current = roomCode;
@@ -281,7 +274,7 @@ export default function CliplinkApp() {
   }
 
   function toggleTheme() {
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
+    setTheme(resolvedTheme === "light" ? "dark" : "light");
   }
 
   function clearRealtimeRetry() {
@@ -470,7 +463,10 @@ export default function CliplinkApp() {
     );
 
     try {
-      const bootstrapDelta = await transport.pollClips(nextRoomCode, lastSeenId);
+      const bootstrapDelta = await transport.pollClips(
+        nextRoomCode,
+        lastSeenId,
+      );
       if (bootstrapDelta.clips.length > 0) {
         const additions: SessionClip[] = bootstrapDelta.clips.map((clip) => ({
           ...clip,
@@ -665,51 +661,108 @@ export default function CliplinkApp() {
   const qrCodeUrl = roomShareUrl
     ? `https://api.qrserver.com/v1/create-qr-code/?size=320x320&margin=0&data=${encodeURIComponent(roomShareUrl)}`
     : "";
+  const panelSurfaceStyle = {
+    background:
+      "linear-gradient(180deg, var(--surface-elevated), transparent 22%), var(--panel-fill)",
+  };
+  const headerSurfaceStyle = {
+    background: "color-mix(in srgb, var(--bg) 82%, transparent)",
+  };
+  const toastSurfaceStyle = {
+    background: "color-mix(in srgb, var(--surface) 96%, transparent)",
+  };
+  const buttonBaseClass =
+    "inline-flex items-center justify-center gap-2.5 rounded-[3px] border px-6 py-3.5 text-[13px] uppercase tracking-[0.05em] transition disabled:cursor-not-allowed disabled:opacity-[0.55] disabled:transform-none";
+  const primaryButtonClass = cx(
+    buttonBaseClass,
+    "min-h-[54px] border-[var(--primary-border)] bg-[var(--primary-bg)] font-bold text-[var(--primary-text)] hover:-translate-y-px hover:bg-[var(--primary-hover-bg)] focus-visible:-translate-y-px focus-visible:bg-[var(--primary-hover-bg)] sm:min-h-[52px] md:min-h-12",
+  );
+  const secondaryButtonClass = cx(
+    buttonBaseClass,
+    "min-h-[54px] border-[var(--border-active)] bg-transparent text-(--text-dim) hover:border-[var(--accent)] hover:text-(--accent) focus-visible:border-[var(--accent)] focus-visible:text-(--accent) sm:min-h-[52px] md:min-h-12",
+  );
+  const actionButtonClass =
+    "inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-[2px] border border-[var(--border-active)] bg-transparent px-3.5 py-2 text-[11px] uppercase tracking-[0.08em] text-[var(--text-dim)] transition hover:border-[var(--text-dim)] hover:text-[var(--text)] focus-visible:border-[var(--text-dim)] focus-visible:text-[var(--text)] max-[430px]:w-full";
+  const panelToolClass =
+    "min-h-[30px] rounded-[2px] border border-transparent px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] text-(--text-muted) transition hover:border-[var(--border-active)] hover:text-(--text) focus-visible:border-[var(--border-active)] focus-visible:text-[var(--text)]";
+  const panelAccentClass =
+    "border-[var(--accent-button-border)] bg-[var(--accent-button-bg)] font-bold text-(--accent-button-text) hover:border-[var(--accent-button-hover-border)] hover:bg-[var(--accent-button-hover-bg)] focus-visible:border-[var(--accent-button-hover-border)] focus-visible:bg-[var(--accent-button-hover-bg)] hover:text-(--accent-button-text)";
 
   return (
     <>
-      <div className="cliplink-shell">
-        <header className="cliplink-header">
-          <div className="cliplink-logo">
-            CLIP<span>LINK</span>
+      <div className="flex min-h-screen flex-col">
+        <header
+          className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border)] px-[14px] py-3 backdrop-blur-[14px] sm:px-5 sm:py-[14px] md:px-8 md:py-[18px]"
+          style={headerSurfaceStyle}
+        >
+          <div
+            className="text-[17px] font-extrabold tracking-[-0.04em] md:text-[20px] md:tracking-[-0.03em]"
+            style={{ fontFamily: "var(--font-display)" }}
+          >
+            CLIP
+            <span className="text-[var(--logo-accent)]">LINK</span>
           </div>
-          <div className="header-actions">
-            <div className="status-pill" aria-live="polite">
+          <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
+            <div
+              className="inline-flex items-center gap-[5px] text-[9px] uppercase tracking-[0.04em] text-[var(--text-muted)] sm:gap-1.5 sm:text-[10px] sm:tracking-[0.06em] md:gap-2 md:text-[11px] md:tracking-[0.08em]"
+              aria-live="polite"
+            >
               <div
-                className={`status-dot ${status === "offline" ? "" : status}`}
+                className={cn(
+                  "h-[7px] w-[7px] rounded-full bg-[var(--text-muted)] transition-[background,box-shadow] duration-200",
+                  status === "live" &&
+                    "bg-[var(--success)] shadow-[0_0_10px_var(--success)]",
+                  status === "syncing" &&
+                    "animate-[pulse_1s_infinite] bg-[var(--accent)] shadow-[0_0_10px_var(--accent)]",
+                  status === "error" &&
+                    "bg-[var(--danger)] shadow-[0_0_10px_rgb(255_68_68_/_35%)]",
+                )}
               />
               <span>{statusLabel(status)}</span>
             </div>
             <button
-              className="theme-toggle"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-[var(--border-active)] bg-white/2 p-0 text-[var(--text-dim)] transition hover:border-[var(--accent)] hover:text-[var(--text)] focus-visible:border-[var(--accent)] focus-visible:text-[var(--text)] md:min-h-[34px] md:min-w-[34px] md:px-[11px] md:py-[6px]"
               type="button"
               onClick={toggleTheme}
             >
-              <IconTheme theme={theme} />
-              {/* {theme === "dark" ? "Light" : "Dark"} */}
+              <IconTheme
+                theme={mounted && resolvedTheme === "light" ? "light" : "dark"}
+              />
             </button>
           </div>
         </header>
 
-        <main className="cliplink-main">
-          <div className="cliplink-stage">
+        <main className="flex flex-1 justify-center px-3 py-[22px] pb-12 sm:px-4 sm:py-7 sm:pb-14 md:px-6 md:py-14 md:pb-[72px]">
+          <div className="w-full max-w-[760px]">
             {!joined ? (
-              <section className="landing-view">
-                <div className="hero-copy">
-                  <h1>
-                    Copy here.
-                    <em>Paste anywhere.</em>
+              <section className="mx-auto flex max-w-[720px] flex-col items-center gap-5 sm:gap-6 md:gap-9">
+                <div className="max-w-full text-center md:max-w-[700px]">
+                  <h1
+                    className={cx(
+                      "mb-4 text-[clamp(1.7rem,15vw,2.45rem)] leading-[0.98] text-[var(--text)] sm:text-[clamp(2rem,11vw,3rem)] sm:leading-[0.96] md:text-[clamp(4.8rem,7.1vw,6.35rem)] md:leading-[0.82]",
+                      mounted && resolvedTheme === "light"
+                        ? "tracking-[-0.075em]"
+                        : "tracking-[-0.05em] sm:tracking-[-0.06em] md:tracking-[-0.07em]",
+                    )}
+                    style={{ fontFamily: "var(--font-display)" }}
+                  >
+                    <span className="block md:max-w-[6.2ch] md:mx-auto">
+                      Copy here.
+                    </span>
+                    <em className="mt-[0.08em] block not-italic text-[var(--hero-highlight)] sm:mt-[0.04em] md:mx-auto md:max-w-[7.3ch]">
+                      Paste anywhere.
+                    </em>
                   </h1>
-                  <p>
+                  <p className="m-0 text-[11px] leading-[1.75] text-[var(--text-dim)] sm:text-[12px] md:text-[13px] md:leading-[1.8]">
                     Create a room. Share the code.
                     <br />
                     Your clipboard, synced across devices.
                   </p>
                 </div>
 
-                <div className="action-stack">
+                <div className="flex w-full max-w-full flex-col gap-3 md:max-w-[680px]">
                   <button
-                    className="btn btn-primary"
+                    className={primaryButtonClass}
                     onClick={() => void createRoom()}
                     disabled={isBusy}
                   >
@@ -717,11 +770,15 @@ export default function CliplinkApp() {
                     New Room
                   </button>
 
-                  <div className="divider">or join existing</div>
+                  <div className="flex w-full items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-[var(--text-muted)] sm:text-[11px] sm:gap-3">
+                    <span className="h-px flex-1 bg-[var(--border)]" />
+                    <span>or join existing</span>
+                    <span className="h-px flex-1 bg-[var(--border)]" />
+                  </div>
 
-                  <div className="button-row">
+                  <div className="flex flex-col gap-2 sm:gap-2.5 md:flex-row">
                     <input
-                      className="code-input"
+                      className="min-h-[54px] flex-1 rounded-[3px] border border-[var(--border-active)] bg-[var(--surface)] px-4 py-3 text-center text-[18px] font-bold uppercase tracking-[0.16em] text-[var(--text)] outline-none transition placeholder:text-[13px] placeholder:font-normal placeholder:tracking-[0.08em] placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] sm:min-h-[52px]"
                       type="text"
                       inputMode="text"
                       autoCapitalize="characters"
@@ -741,7 +798,7 @@ export default function CliplinkApp() {
                       }}
                     />
                     <button
-                      className="btn btn-secondary"
+                      className={secondaryButtonClass}
                       onClick={() => void joinExistingRoom(joinCode)}
                       disabled={isBusy}
                     >
@@ -749,19 +806,21 @@ export default function CliplinkApp() {
                     </button>
                   </div>
 
-                  <p className="inline-note">
+                  <p className="mt-[-4px] max-w-[640px] text-center text-[10px] leading-[1.8] text-[var(--text-muted)] md:text-[11px] md:leading-[1.7]">
                     No sign-up, no install, no saved history. Rooms expire after
                     6 hours of inactivity.
                   </p>
                 </div>
               </section>
             ) : (
-              <section className="room-view">
-                <div className="room-header">
-                  <div className="room-code-display">
-                    <span className="room-label">Room</span>
+              <section className="flex w-full flex-col gap-[18px] md:gap-6">
+                <div className="flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-start">
+                  <div className="flex flex-col items-start gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3">
+                    <span className="text-[11px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
+                      Room
+                    </span>
                     <button
-                      className="room-code-badge"
+                      className="cursor-pointer rounded-[2px] border border-[var(--accent-dim)] bg-transparent px-[10px] py-[6px] text-[16px] font-bold tracking-[0.14em] text-[var(--room-badge)] transition hover:bg-[var(--accent-dim)] focus-visible:bg-[var(--accent-dim)] sm:text-[18px] md:px-3 md:text-[20px] md:tracking-[0.2em]"
                       type="button"
                       title="Copy room link"
                       onClick={() => void copyRoomLink(roomCode!)}
@@ -770,9 +829,9 @@ export default function CliplinkApp() {
                     </button>
                   </div>
 
-                  <div className="room-actions">
+                  <div className="flex flex-wrap justify-start gap-2 md:justify-end">
                     <button
-                      className="icon-btn"
+                      className={actionButtonClass}
                       type="button"
                       onClick={() => void shareRoom(roomCode!)}
                     >
@@ -780,7 +839,7 @@ export default function CliplinkApp() {
                       Share Link
                     </button>
                     <button
-                      className="icon-btn"
+                      className={actionButtonClass}
                       type="button"
                       onClick={openQrSheet}
                     >
@@ -788,7 +847,10 @@ export default function CliplinkApp() {
                       QR
                     </button>
                     <button
-                      className="icon-btn danger"
+                      className={cx(
+                        actionButtonClass,
+                        "hover:border-[var(--danger)] hover:text-[var(--danger)] focus-visible:border-[var(--danger)] focus-visible:text-[var(--danger)]",
+                      )}
                       type="button"
                       onClick={leaveRoom}
                     >
@@ -797,26 +859,35 @@ export default function CliplinkApp() {
                   </div>
                 </div>
 
-                <div className="clip-panel">
-                  <div className="panel-toolbar">
-                    <span className="panel-label">Clipboard</span>
-                    <div className="panel-tools">
+                <div
+                  className="overflow-hidden rounded-[4px] border border-[var(--border)] shadow-[var(--shadow)]"
+                  style={panelSurfaceStyle}
+                >
+                  <div className="flex flex-col items-stretch justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-elevated)] px-4 py-[10px] md:flex-row md:items-center">
+                    <span className="hidden text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)] md:inline">
+                      Clipboard
+                    </span>
+                    <div className="flex w-full flex-wrap items-center justify-start gap-[6px] md:w-auto md:flex-nowrap md:justify-end">
                       <button
-                        className="tool-btn"
+                        className={panelToolClass}
                         type="button"
                         onClick={() => void pasteFromDevice()}
                       >
                         Paste from device
                       </button>
                       <button
-                        className="tool-btn"
+                        className={panelToolClass}
                         type="button"
                         onClick={() => setEditorText("")}
                       >
                         Clear
                       </button>
                       <button
-                        className="tool-btn accent"
+                        className={cn(
+                          panelToolClass,
+                          panelAccentClass,
+                          "min-w-[82px] px-4",
+                        )}
                         type="button"
                         onClick={() => void sendClip()}
                         disabled={isBusy}
@@ -827,42 +898,58 @@ export default function CliplinkApp() {
                   </div>
 
                   <textarea
-                    className="editor"
+                    className="min-h-[200px] w-full resize-y border-0 bg-transparent px-4 py-4 text-[13px] leading-[1.7] text-[var(--text)] outline-none placeholder:text-[var(--text-muted)] sm:min-h-[200px] md:min-h-[240px] md:px-5 md:py-5 md:text-[14px]"
                     value={editorText}
                     placeholder="Type or paste anything here, then hit Send to sync it across devices..."
                     onChange={(event) => setEditorText(event.target.value)}
                   />
-                  <div className="char-count">
+                  <div className="border-t border-[var(--border)] px-4 py-2 text-left text-[10px] tracking-[0.06em] text-[var(--text-muted)] md:text-right md:px-4">
                     {formatCharCount(editorText.length)}
                   </div>
                 </div>
 
-                <div className="history-section">
-                  <div className="section-label">History</div>
-                  <div className="history-list">
+                <div className="flex flex-col gap-[10px]">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                    <span>History</span>
+                    <span className="h-px flex-1 bg-[var(--border)]" />
+                  </div>
+                  <div className="flex flex-col gap-[6px]">
                     {history.length === 0 ? (
-                      <div className="empty-state">
+                      <div className="rounded-[4px] border border-dashed border-[var(--border-active)] px-8 py-8 text-center text-[12px] tracking-[0.05em] text-[var(--text-muted)]">
                         No clips yet. Send something.
                       </div>
                     ) : (
                       history.map((clip) => (
                         <div
                           key={clip.id}
-                          className={`history-item ${clip.direction}`}
+                          className={cx(
+                            "grid animate-[fade-in_0.3s_ease] grid-cols-[48px_1fr] items-start gap-[10px] rounded-[4px] border border-[var(--border)] p-3 shadow-[var(--shadow)] md:flex md:items-start md:gap-3 md:px-4 md:py-3",
+                            clip.direction === "incoming"
+                              ? "border-l-2 border-l-[var(--incoming-border)]"
+                              : "border-l-2 border-l-[var(--text-muted)]",
+                          )}
+                          style={panelSurfaceStyle}
                         >
-                          <div className="history-meta">
-                            <span className="history-dir">
+                          <div className="flex min-w-[52px] flex-col gap-1 md:min-w-[64px]">
+                            <span
+                              className={cx(
+                                "text-[9px] uppercase tracking-[0.1em]",
+                                clip.direction === "incoming"
+                                  ? "text-[var(--incoming-text)]"
+                                  : "text-[var(--text-muted)]",
+                              )}
+                            >
                               {clip.direction === "incoming" ? "↓ IN" : "↑ OUT"}
                             </span>
-                            <span className="history-time">
+                            <span className="text-[9px] uppercase tracking-[0.1em] text-[var(--text-muted)]">
                               {formatHistoryTime(clip.ts)}
                             </span>
                           </div>
-                          <div className="history-text">
+                          <div className="min-w-0 text-[11px] leading-[1.5] text-[var(--text-dim)] truncate md:text-[12px]">
                             {truncatePreview(clip.text)}
                           </div>
                           <button
-                            className="history-copy"
+                            className="col-start-2 mt-1 min-h-8 justify-self-start rounded-[2px] border border-transparent px-2 py-1 text-[10px] text-[var(--text-muted)] transition hover:border-[var(--border-active)] hover:text-[var(--text)] focus-visible:border-[var(--border-active)] focus-visible:text-[var(--text)] md:mt-0 md:flex-shrink-0"
                             type="button"
                             onClick={() => void copyHistoryItem(clip.text)}
                           >
@@ -879,28 +966,38 @@ export default function CliplinkApp() {
         </main>
       </div>
 
-      <div className={`screen-flash ${flashActive ? "active" : ""}`} />
+      <div
+        className={cx(
+          "pointer-events-none fixed inset-0 z-[500] bg-[var(--flash-bg)] transition-opacity duration-150",
+          flashActive ? "opacity-100 duration-0" : "opacity-0",
+        )}
+      />
 
       {joined && showQrSheet ? (
         <div
-          className="overlay-backdrop"
+          className="fixed inset-0 z-[800] flex items-end justify-center bg-black/60 p-3 backdrop-blur-[10px] sm:p-6 sm:items-center"
           role="presentation"
           onClick={closeQrSheet}
         >
           <div
-            className="qr-sheet"
+            className="flex w-full max-w-[420px] flex-col gap-[18px] rounded-t-[18px] rounded-b-[8px] border border-[var(--border-active)] p-[18px] shadow-[var(--shadow)] sm:rounded-[16px] sm:p-5"
+            style={panelSurfaceStyle}
             role="dialog"
             aria-modal="true"
             aria-label="Room QR code"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="qr-sheet-header">
+            <div className="flex flex-col items-stretch gap-3 max-[430px]:items-stretch sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="qr-sheet-kicker">Scan to join</p>
-                <h2>{roomCode}</h2>
+                <p className="mb-1.5 text-[10px] uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                  Scan to join
+                </p>
+                <h2 className="m-0 text-[20px] tracking-[0.14em] text-[var(--accent)] sm:text-[24px]">
+                  {roomCode}
+                </h2>
               </div>
               <button
-                className="icon-btn"
+                className={actionButtonClass}
                 type="button"
                 onClick={closeQrSheet}
               >
@@ -908,7 +1005,7 @@ export default function CliplinkApp() {
               </button>
             </div>
 
-            <div className="qr-frame">
+            <div className="flex justify-center rounded-xl border border-[var(--border)] bg-white p-4">
               <Image
                 src={qrCodeUrl}
                 alt={`QR code for room ${roomCode}`}
@@ -918,21 +1015,21 @@ export default function CliplinkApp() {
               />
             </div>
 
-            <p className="qr-sheet-note">
+            <p className="m-0 text-[12px] leading-[1.7] text-[var(--text-dim)]">
               Scan this code or copy the link to open the room instantly on
               another device.
             </p>
 
-            <div className="qr-sheet-actions">
+            <div className="flex flex-col gap-[10px] sm:flex-row">
               <button
-                className="btn btn-secondary"
+                className={secondaryButtonClass}
                 type="button"
                 onClick={() => void copyRoomLink(roomCode!)}
               >
                 Copy Link
               </button>
               <button
-                className="btn btn-primary"
+                className={primaryButtonClass}
                 type="button"
                 onClick={() => void shareRoom(roomCode!)}
               >
@@ -943,9 +1040,24 @@ export default function CliplinkApp() {
         </div>
       ) : null}
 
-      <div className="toast-stack" aria-live="polite">
+      <div
+        className="fixed bottom-8 left-1/2 z-[999] flex -translate-x-1/2 flex-col items-center gap-[10px]"
+        aria-live="polite"
+      >
         {toasts.map((toast) => (
-          <div key={toast.id} className={`toast ${toast.tone}`}>
+          <div
+            key={toast.id}
+            className={cx(
+              "min-w-[min(92vw,320px)] animate-[toast-in_0.25s_cubic-bezier(0.34,1.56,0.64,1)] rounded-[3px] border px-4 py-2.5 text-[12px] tracking-[0.04em] shadow-[var(--shadow)]",
+              toast.tone === "success" &&
+                "border-[var(--success)] text-[var(--success)]",
+              toast.tone === "info" &&
+                "border-[var(--accent)] text-[var(--accent)]",
+              toast.tone === "error" &&
+                "border-[var(--danger)] text-[var(--danger)]",
+            )}
+            style={toastSurfaceStyle}
+          >
             {toast.message}
           </div>
         ))}
