@@ -197,6 +197,7 @@ export default function CliplinkApp() {
   const initializedRoomRef = useRef<string | null>(null);
   const realtimeRetryRef = useRef<number | null>(null);
   const realtimeRetryCountRef = useRef(0);
+  const realtimeOpenedRef = useRef(false);
 
   useEffect(() => {
     senderIdRef.current = getSessionSenderId();
@@ -358,10 +359,16 @@ export default function CliplinkApp() {
     stopPolling();
     stopStream();
     clearRealtimeRetry();
+    realtimeOpenedRef.current = false;
     const cleanup = transport.streamClips(nextRoomCode, lastSeenIdRef.current, {
       onOpen: () => {
+        const hadFallback = realtimeRetryCountRef.current > 0;
+        realtimeOpenedRef.current = true;
         realtimeRetryCountRef.current = 0;
         setStatus("live");
+        if (hadFallback) {
+          pushToast("Realtime connection restored.", "success");
+        }
       },
       onClips: (clips) => {
         const incoming = clips
@@ -380,11 +387,15 @@ export default function CliplinkApp() {
       onDisconnect: (reason) => {
         streamCleanupRef.current = null;
         if (reason === "error" && roomCodeRef.current === nextRoomCode) {
+          const hadOpened = realtimeOpenedRef.current;
+          realtimeOpenedRef.current = false;
           startPolling(nextRoomCode);
           realtimeRetryCountRef.current += 1;
           scheduleRealtimeRetry(nextRoomCode);
           pushToast(
-            "Realtime connection dropped. Falling back to polling.",
+            hadOpened
+              ? "Realtime connection dropped. Using polling for now."
+              : "Realtime unavailable. Using polling for now.",
             "info",
           );
         }
@@ -550,6 +561,7 @@ export default function CliplinkApp() {
     setStatus("offline");
     lastSeenIdRef.current = 0;
     realtimeRetryCountRef.current = 0;
+    realtimeOpenedRef.current = false;
     clearRealtimeRetry();
     updateUrl(null);
     pushToast("Left room.", "info");
