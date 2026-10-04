@@ -41,6 +41,13 @@ export const CLIP_RATE_LIMIT = {
   refillSeconds: 1,
 } as const;
 
+/** Deleting is rarer than sending, and a burst of it is a room being cleared. */
+export const ERASE_RATE_LIMIT = {
+  burst: 30,
+  refillTokens: 1,
+  refillSeconds: 2,
+} as const;
+
 /** Tighter: creating rooms is cheap for the caller and costs the server a key. */
 export const ROOM_CREATE_RATE_LIMIT = {
   burst: 10,

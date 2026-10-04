@@ -4,10 +4,15 @@ import {
   rateLimitResponse,
   storageErrorResponse,
 } from "@/lib/cliplink/errors";
+import { openRoomEraseCheck } from "@/lib/cliplink/erase";
 import { getClientIp, roomCreateRateLimit } from "@/lib/cliplink/rate-limit";
 import { storage } from "@/lib/cliplink/storage";
 import type { CreateRoomRequest, CreateRoomResponse } from "@/lib/cliplink/types";
-import { validateKeyCheck, validateRoomTtl } from "@/lib/cliplink/validation";
+import {
+  validateEraseCheck,
+  validateKeyCheck,
+  validateRoomTtl,
+} from "@/lib/cliplink/validation";
 
 export async function POST(request: Request) {
   const rateLimit = await roomCreateRateLimit.check(getClientIp(request));
@@ -38,9 +43,22 @@ export async function POST(request: Request) {
     return errorResponse(400, "invalid_key_check", keyCheck.message);
   }
 
+  const eraseCheck = validateEraseCheck(payload.eraseCheck);
+  if (!eraseCheck.ok) {
+    return errorResponse(400, "invalid_erase_check", eraseCheck.message);
+  }
+
   let room;
   try {
-    room = await storage.createRoom(ttl.ttlSeconds, keyCheck.keyCheck);
+    room = await storage.createRoom(
+      ttl.ttlSeconds,
+      keyCheck.keyCheck,
+      // A room with no key fingerprint is an open one, whose check only the
+      // server can supply — see openRoomEraseCheck. A keyed room that sent
+      // none stays undeletable: its creator predates deletion.
+      eraseCheck.eraseCheck ??
+        (keyCheck.keyCheck ? undefined : openRoomEraseCheck),
+    );
   } catch (error) {
     return storageErrorResponse(error);
   }

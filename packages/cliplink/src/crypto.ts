@@ -7,13 +7,16 @@
  * room code — which it must see to route anything — is not key material.
  *
  * WebCrypto only. Nothing here may be imported by a route: `crypto.subtle` is
- * the client's, and the server has no business holding these functions.
+ * the client's, and the server has no business holding these functions. The
+ * one exception is `deriveOpenRoomKey`, for the reason given on it — an open
+ * room's key is the server's to derive by design.
  */
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
 /** Bytes of the non-secret key fingerprint. Not a key, and not reversible. */
 const CHECK_BYTES = 8;
+const ERASE_TOKEN_BYTES = 32;
 const WIRE_PREFIX = "v1.";
 
 /**
@@ -46,6 +49,18 @@ export type RoomKey = {
    * "wrong key" at once instead of discovering it when a clip fails to open.
    */
   check: string;
+  /**
+   * Presented to the server to delete clips. Derived, so every key holder has
+   * the same one and nobody else can produce it; one-way, so the server
+   * learning it on first use tells it nothing about the key.
+   */
+  eraseToken: string;
+  /**
+   * SHA-256 of `eraseToken`, given to the server when the room is created. It
+   * is what the server checks a presented token against, so it never has to
+   * hold the token itself until someone actually deletes something.
+   */
+  eraseCheck: string;
 };
 
 const encoder = new TextEncoder();
@@ -124,7 +139,7 @@ async function deriveRoomKey(raw: Uint8Array<ArrayBuffer>): Promise<RoomKey> {
     info: encoder.encode(info),
   });
 
-  const [clipKey, signalKey, metaKey, checkBits] = await Promise.all([
+  const [clipKey, signalKey, metaKey, checkBits, eraseBits] = await Promise.all([
     crypto.subtle.deriveKey(
       params("cliplink:clip"),
       base,
@@ -147,7 +162,19 @@ async function deriveRoomKey(raw: Uint8Array<ArrayBuffer>): Promise<RoomKey> {
       ["encrypt", "decrypt"],
     ),
     crypto.subtle.deriveBits(params("cliplink:check"), base, CHECK_BYTES * 8),
+    crypto.subtle.deriveBits(
+      params("cliplink:erase"),
+      base,
+      ERASE_TOKEN_BYTES * 8,
+    ),
   ]);
+
+  const eraseToken = encodeBase32(new Uint8Array(eraseBits));
+  const eraseCheck = encodeBase64Url(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", encoder.encode(eraseToken)),
+    ),
+  );
 
   return {
     encoded: encodeBase32(raw),
@@ -155,6 +182,8 @@ async function deriveRoomKey(raw: Uint8Array<ArrayBuffer>): Promise<RoomKey> {
     signalKey,
     metaKey,
     check: encodeBase32(new Uint8Array(checkBits)),
+    eraseToken,
+    eraseCheck,
   };
 }
 

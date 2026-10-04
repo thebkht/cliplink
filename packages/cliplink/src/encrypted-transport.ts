@@ -70,12 +70,64 @@ export function createEncryptedTransport(
   // handshake. Chaining keeps send order without making callers await.
   let sendChain: Promise<void> = Promise.resolve();
 
-  async function decryptClips(clips: Clip[]): Promise<Clip[]> {
+  // Deletion. A poll and a socket backlog can only ever add clips, so the
+  // server counts deletions (`eraseGen`) and this compares: a count ahead of
+  // the last one seen means something was removed that nobody said. What, is
+  // found by asking for the room again and seeing which known clips are gone.
+  /** The last `eraseGen` accounted for. Null until a server reports one. */
+  let knownGen: number | null = null;
+  /** Clips handed to the caller and not yet known to be deleted. */
+  const seen = new Set<number>();
+  /**
+   * Clips known deleted. Kept so one whose decryption was still in flight when
+   * its removal arrived is not delivered afterwards, as if it had come back.
+   */
+  const gone = new Set<number>();
+  let reconciling: Promise<number[]> | null = null;
+
+  function markGone(ids: number[]) {
+    for (const id of ids) {
+      gone.add(id);
+      seen.delete(id);
+    }
+    return ids;
+  }
+
+  /** True when the server has counted a deletion this transport has not seen. */
+  function isAhead(gen: number | undefined): gen is number {
+    if (gen === undefined) {
+      // A server from before deletion existed. Not a count of zero.
+      return false;
+    }
+    if (knownGen === null) {
+      knownGen = gen;
+      return false;
+    }
+    return gen > knownGen;
+  }
+
+  /** Resolves with the clips that turned out to be gone. */
+  function reconcile(code: RoomCode, gen: number) {
+    reconciling ??= (async () => {
+      // Only what was known before asking: a clip that arrives while the
+      // snapshot is in flight is newer than it, not missing from it.
+      const before = [...seen];
+      const response = await wire.connect(code);
+      const live = new Set(response.clips.map((clip) => clip.id));
+      knownGen = Math.max(knownGen ?? 0, gen, response.room.eraseGen ?? 0);
+      return markGone(before.filter((id) => !live.has(id)));
+    })().finally(() => {
+      reconciling = null;
+    });
+    return reconciling;
+  }
+
+  async function decryptClips(sealedClips: Clip[]): Promise<Clip[]> {
     const key = roomKey;
     const code = roomCode;
 
-    return Promise.all(
-      clips.map(async (sealed) => {
+    const clips = await Promise.all(
+      sealedClips.map(async (sealed) => {
         const { meta } = sealed;
         const clip = withoutSender(sealed);
         if (!key || !code) {
@@ -94,6 +146,13 @@ export function createEncryptedTransport(
         };
       }),
     );
+
+    // After the awaits, so a removal that landed meanwhile is honoured.
+    const kept = clips.filter((clip) => !gone.has(clip.id));
+    for (const clip of kept) {
+      seen.add(clip.id);
+    }
+    return kept;
   }
 
   return {
@@ -113,6 +172,10 @@ export function createEncryptedTransport(
       if (key && response.room.keyCheck && response.room.keyCheck !== key.check) {
         throw new RoomKeyMismatchError();
       }
+      // A fresh snapshot is the whole truth about the room: start over from it.
+      seen.clear();
+      gone.clear();
+      knownGen = response.room.eraseGen ?? null;
       return { ...response, clips: await decryptClips(response.clips) };
     },
 
@@ -131,6 +194,7 @@ export function createEncryptedTransport(
       });
       // Echo back what the caller handed us rather than decrypting our own
       // ciphertext, so the sender's own history row cannot read as broken.
+      seen.add(response.clip.id);
       return {
         ...response,
         clip: {
@@ -143,12 +207,69 @@ export function createEncryptedTransport(
 
     async pollClips(code, afterId) {
       const response = await wire.pollClips(code, afterId);
-      return { clips: await decryptClips(response.clips) };
+      const clips = await decryptClips(response.clips);
+      if (!isAhead(response.eraseGen)) {
+        return { clips };
+      }
+
+      // A failed look is not fatal: the count is still ahead on the next poll.
+      const removed = await reconcile(code, response.eraseGen).catch(() => []);
+      return {
+        clips: clips.filter((clip) => !gone.has(clip.id)),
+        ...(removed.length > 0 ? { removed } : {}),
+      };
+    },
+
+    async eraseClips(code, request) {
+      const key = roomKey;
+      if (!key) {
+        throw new Error("This room is encrypted and no key is loaded.");
+      }
+
+      const response = await wire.eraseClips(code, key.eraseToken, request);
+      const ids = new Set(markGone(response.ids));
+      if (knownGen !== null && response.gen > knownGen + 1) {
+        // Someone else deleted something in between, and this is the first
+        // this transport has heard of it.
+        for (const id of await reconcile(code, response.gen).catch(() => [])) {
+          ids.add(id);
+        }
+      } else {
+        knownGen = Math.max(knownGen ?? 0, response.gen);
+      }
+      return { ids: [...ids], gen: response.gen };
     },
 
     streamClips(code, afterId, peerId, handlers) {
+      const removed = (ids: number[]) => {
+        if (ids.length > 0) {
+          handlers.onRemoved?.(ids);
+        }
+      };
+      const catchUp = (gen: number) => {
+        void reconcile(code, gen).then(removed, () => {
+          // Left for the next count that arrives to notice.
+        });
+      };
+
       return wire.streamClips(code, afterId, peerId, {
-        onOpen: handlers.onOpen,
+        onOpen: (eraseGen) => {
+          handlers.onOpen?.();
+          // The backlog a socket replays holds no deletions, so a reconnect
+          // is exactly where one can have been missed.
+          if (isAhead(eraseGen)) {
+            catchUp(eraseGen);
+          }
+        },
+        onRemoved: (ids, gen) => {
+          const missed = knownGen !== null && gen > knownGen + 1;
+          removed(markGone(ids));
+          if (missed) {
+            catchUp(gen);
+          } else {
+            knownGen = Math.max(knownGen ?? 0, gen);
+          }
+        },
         onClips: (clips) => {
           void decryptClips(clips).then(handlers.onClips);
         },

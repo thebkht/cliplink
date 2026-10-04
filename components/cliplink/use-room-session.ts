@@ -103,6 +103,9 @@ export function useRoomSession({
   const [history, setHistory] = useState<SessionClip[]>([]);
   const [arrivalId, setArrivalId] = useState<number | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  // Whether clips here can be deleted: the room was created with an erase
+  // check, and this device holds the key the token comes from.
+  const [erasable, setErasable] = useState(false);
   const [enteringIds, setEnteringIds] = useState<Set<number>>(new Set());
 
   const lastSeenIdRef = useRef(0);
@@ -313,11 +316,25 @@ export function useRoomSession({
         !lockedRef.current && latest.text !== UNDECRYPTABLE_TEXT;
       missed.hold(
         roomCodeRef.current,
-        readable ? latest.text : null,
+        { id: latest.id, text: readable ? latest.text : null },
         clips.length,
       );
     }
     advanceExpiry(latest.ts);
+  }
+
+  /** Clips deleted from the room, whichever device asked. */
+  function applyRemoved(ids: number[]) {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const removed = new Set(ids);
+    setHistory((current) => {
+      const next = current.filter((clip) => !removed.has(clip.id));
+      return next.length === current.length ? current : next;
+    });
+    missed.drop(ids);
   }
 
   /**
@@ -380,6 +397,7 @@ export function useRoomSession({
             }
           });
         },
+        onRemoved: applyRemoved,
         onSignal: (from, payload) => handlersRef.current.onSignal(from, payload),
         onDisconnect: (reason) => {
           streamCleanupRef.current = null;
@@ -420,6 +438,7 @@ export function useRoomSession({
       const incoming = response.clips.filter(
         (clip) => clip.senderId !== senderIdRef.current,
       );
+      applyRemoved(response.removed ?? []);
 
       if (response.clips.length > 0) {
         lastSeenIdRef.current = response.clips.reduce(
@@ -486,6 +505,7 @@ export function useRoomSession({
     setHistory(nextHistory);
     ttlSecondsRef.current = response.room.ttlSeconds;
     setExpiresAt(response.room.expiresAt ?? null);
+    setErasable(response.room.erasable === true && key !== null);
     setStatus("live");
     // Rows present at hydration are not arrivals, so they must not animate in.
     setEnteringIds(new Set());
@@ -535,6 +555,45 @@ export function useRoomSession({
     }
   }
 
+  /**
+   * Deletes for the whole room, not just from this list. The rows go when the
+   * server confirms, so a refused delete leaves them where they were.
+   */
+  async function erase(request: { ids: number[] } | { upTo: number }) {
+    const code = roomCodeRef.current;
+    if (!code) {
+      return false;
+    }
+
+    try {
+      const response = await transport.eraseClips(code, request);
+      if (roomCodeRef.current === code) {
+        // The ids asked for as well as the ones removed: a clip someone else
+        // had already deleted is gone either way.
+        applyRemoved([
+          ...response.ids,
+          ...("ids" in request ? request.ids : []),
+        ]);
+      }
+      return true;
+    } catch (error) {
+      handlersRef.current.pushToast(
+        error instanceof Error ? error.message : "Could not delete.",
+        "error",
+      );
+      return false;
+    }
+  }
+
+  function remove(id: number) {
+    return erase({ ids: [id] });
+  }
+
+  /** Everything the room holds as of the newest clip this device has seen. */
+  function clear() {
+    return erase({ upTo: lastSeenIdRef.current });
+  }
+
   function leave() {
     setRealtimeReady(false);
     onRealtimeClose();
@@ -549,6 +608,7 @@ export function useRoomSession({
     lockedRef.current = false;
     missed.reset();
     setHistory([]);
+    setErasable(false);
     setExpiresAt(null);
     setStatus("offline");
     setEnteringIds(new Set());
@@ -574,9 +634,12 @@ export function useRoomSession({
     arrivalId,
     enteringIds,
     expiresAt,
+    erasable,
     initializedRoomRef,
     hydrate,
     send,
+    remove,
+    clear,
     leave,
     fail,
   };

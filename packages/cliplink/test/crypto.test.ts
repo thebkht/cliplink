@@ -14,7 +14,12 @@ import {
   sealClipMeta,
   sealSignal,
 } from "../src/crypto.ts";
-import { ROOM_KEY_CHARS, ROOM_KEY_CHECK_CHARS } from "../src/protocol.ts";
+import {
+  ERASE_CHECK_CHARS,
+  ERASE_TOKEN_CHARS,
+  ROOM_KEY_CHARS,
+  ROOM_KEY_CHECK_CHARS,
+} from "../src/protocol.ts";
 
 const ROOM = "X7KP2M";
 
@@ -271,5 +276,60 @@ describe("clip metadata", () => {
       await openClipMeta(key, ROOM, text, await sealSignal(key, ROOM, FROM)),
       null,
     );
+  });
+});
+
+/** Derived by the build that introduced deletion, from the legacy key. */
+const ERASE = {
+  token: "9S40T3JBEMJG4C2XR5MXMM5RQ6H904A1ZRH302S6A6J54HV4EFD0",
+  check: "Ca6ZOdTofvJOYgKCvsgPRUjF1gi8VSMS_zwj2pgY5SA",
+  openCheck: "3ZejvRfrO3QbPnWfBkGrF2WJXffQEGVD_Px_e7WVyrY",
+} as const;
+
+describe("the erase token", () => {
+  it("is the same for every holder of a key, and different for another key", async () => {
+    const first = await generateRoomKey();
+    const [again, other] = await Promise.all([
+      importRoomKey(first.encoded),
+      generateRoomKey(),
+    ]);
+    assert.ok(again);
+    assert.equal(again.eraseToken, first.eraseToken);
+    assert.equal(again.eraseCheck, first.eraseCheck);
+    assert.notEqual(other.eraseToken, first.eraseToken);
+  });
+
+  it("is not the key, the fingerprint, or anything either can be read from", async () => {
+    const key = await generateRoomKey();
+    assert.equal(key.eraseToken.length, ERASE_TOKEN_CHARS);
+    assert.equal(key.eraseCheck.length, ERASE_CHECK_CHARS);
+    assert.notEqual(key.eraseToken, key.encoded);
+    assert.equal(key.encoded.includes(key.check), false);
+    assert.equal(key.eraseToken.includes(key.check), false);
+  });
+
+  it("has a check that is the SHA-256 of the token, which is all the server computes", async () => {
+    const key = await generateRoomKey();
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(key.eraseToken),
+    );
+    assert.equal(key.eraseCheck, Buffer.from(digest).toString("base64url"));
+  });
+
+  it("is pinned for the legacy key, so a later build still deletes from rooms already open", async () => {
+    const key = await importRoomKey(LEGACY.encoded);
+    assert.ok(key);
+    assert.equal(key.eraseToken, ERASE.token);
+    assert.equal(key.eraseCheck, ERASE.check);
+  });
+
+  it("can be derived for an open room from its code, as the server does", async () => {
+    const [first, second] = await Promise.all([
+      deriveOpenRoomKey(ROOM),
+      deriveOpenRoomKey(ROOM),
+    ]);
+    assert.equal(first.eraseCheck, second.eraseCheck);
+    assert.equal(first.eraseCheck, ERASE.openCheck);
   });
 });

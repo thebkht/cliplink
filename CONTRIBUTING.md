@@ -67,6 +67,15 @@ Adding a protocol feature therefore looks like this:
 
 The package's public API follows semver, so renaming an export or an option is a major. New failure codes and new `FileItem` fields are minors.
 
+`packages/cliplink` — the room protocol — is bound the same way, with one difference: there is no capability handshake, because a room is not a pair of peers. A tab loaded before a deploy, a CLI installed last month and a server instance still running the previous build all share a room with the newest client. Adding to the protocol looks like this:
+
+1. New fields are optional, on requests and responses both. An absent field means "this side predates it", which is not the same as zero or false — a poll with no `eraseGen` says nothing about deletions.
+2. A new socket frame or sealed signal gets a new `type`. Old clients drop types they do not know; a new meaning for an existing type reaches them as the old one.
+3. Server-to-server messages get a new pub/sub channel. The clip channel carries a bare clip, and an instance from before your change relays whatever it finds there as one.
+4. Anything a client learns from the server about another client is sealed, or it is not sent. Seal it under its own HKDF subkey and bind it to what it describes, as `sealClipMeta` does, so it cannot be moved somewhere else.
+5. The pinned vectors in `test/crypto.test.ts` are never updated, only added to.
+6. Cover the mixed pairing here too: it has to degrade, not fail.
+
 ## Code style
 
 - TypeScript throughout; no new `any`.

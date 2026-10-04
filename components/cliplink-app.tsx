@@ -161,6 +161,7 @@ export default function CliplinkApp({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   // The room being joined by code alone, waiting on a key the link never
@@ -207,6 +208,7 @@ export default function CliplinkApp({
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const scrollSentinelRef = useRef<HTMLDivElement>(null);
   const confirmResetRef = useRef<number | null>(null);
+  const clearConfirmResetRef = useRef<number | null>(null);
   const shareChannelRef = useRef<BroadcastChannel | null>(null);
   // Shared files wait here until the room can actually offer them.
   const queuedShareFilesRef = useRef<File[]>([]);
@@ -290,7 +292,11 @@ export default function CliplinkApp({
 
   useEffect(() => {
     const confirmReset = confirmResetRef;
-    return () => clearTimer(confirmReset);
+    const clearConfirmReset = clearConfirmResetRef;
+    return () => {
+      clearTimer(confirmReset);
+      clearTimer(clearConfirmReset);
+    };
   }, []);
 
   useEffect(() => {
@@ -571,7 +577,13 @@ export default function CliplinkApp({
     try {
       if (privateRoom) {
         const key = await generateRoomKey();
-        const response = await createRoomRequest(key.check);
+        // The erase check has to go with the request that makes the room:
+        // there is no later moment at which it can safely be set.
+        const response = await createRoomRequest(
+          key.check,
+          undefined,
+          key.eraseCheck,
+        );
         await hydrateRoom(response.code, key, true);
         pushToast("Private room created — share the link or the key.", "success");
         return;
@@ -685,6 +697,36 @@ export default function CliplinkApp({
    * once. The confirmation lapses on its own rather than sticking around as a
    * second thing to dismiss.
    */
+  /**
+   * Two taps, like leaving, and for a better reason: this deletes the room's
+   * clips on every device, and there is nothing to undo it with.
+   */
+  function requestClearHistory() {
+    if (!confirmingClear) {
+      setConfirmingClear(true);
+      clearTimer(clearConfirmResetRef);
+      clearConfirmResetRef.current = window.setTimeout(() => {
+        setConfirmingClear(false);
+        clearConfirmResetRef.current = null;
+      }, CONFIRM_WINDOW_MS);
+      return;
+    }
+
+    clearTimer(clearConfirmResetRef);
+    setConfirmingClear(false);
+    void room.clear().then((cleared) => {
+      if (cleared) {
+        pushToast("History cleared.", "success");
+      }
+    });
+  }
+
+  async function deleteHistoryItem(id: number) {
+    if (await room.remove(id)) {
+      pushToast("Clip deleted.", "success");
+    }
+  }
+
   function requestLeave() {
     if (!confirmingLeave) {
       setConfirmingLeave(true);
@@ -915,6 +957,8 @@ export default function CliplinkApp({
     canSend,
     hasUndo: Boolean(editor.clearedText),
     hasIncoming: Boolean(latestIncoming),
+    canClearHistory: room.erasable && room.history.length > 0,
+    clearHistory: requestClearHistory,
     send: () => void sendClip(),
     copyRoomLink: () => void copyRoomLink(roomCode!),
     copyRoomKey: () => void copyRoomKey(),
@@ -958,6 +1002,11 @@ export default function CliplinkApp({
       if (confirmingLeave) {
         clearTimer(confirmResetRef);
         setConfirmingLeave(false);
+        return;
+      }
+      if (confirmingClear) {
+        clearTimer(clearConfirmResetRef);
+        setConfirmingClear(false);
         return;
       }
       editor.blur();
@@ -1111,6 +1160,13 @@ export default function CliplinkApp({
                   arrivalId={room.arrivalId}
                   enteringIds={room.enteringIds}
                   onCopy={(text) => void copyHistoryItem(text)}
+                  onDelete={
+                    room.erasable
+                      ? (id) => void deleteHistoryItem(id)
+                      : undefined
+                  }
+                  onClear={room.erasable ? requestClearHistory : undefined}
+                  confirmingClear={confirmingClear}
                 />
               </section>
             )}

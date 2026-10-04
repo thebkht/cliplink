@@ -33,6 +33,11 @@ type HistoryListProps = {
   arrivalId: number | null;
   enteringIds: Set<number>;
   onCopy: (text: string) => void;
+  /** Absent when this room's clips cannot be deleted. */
+  onDelete?: (id: number) => void;
+  onClear?: () => void;
+  /** The first tap on Clear has landed and the second will do it. */
+  confirmingClear: boolean;
 };
 
 export function HistoryList({
@@ -40,13 +45,31 @@ export function HistoryList({
   arrivalId,
   enteringIds,
   onCopy,
+  onDelete,
+  onClear,
+  confirmingClear,
 }: HistoryListProps) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
     <section className="flex flex-col gap-2">
       {/* Inset to the rows' own content edge, as grouped-list headers are. */}
-      <h2 className="m-0 px-4 text-lg font-semibold text-foreground">History</h2>
+      <div className="flex min-h-8 items-center justify-between gap-3 px-4">
+        <h2 className="m-0 text-lg font-semibold text-foreground">History</h2>
+        {onClear && history.length > 0 ? (
+          <Button
+            // Pulled out by its own padding so the label, not the button's
+            // edge, lines up with the rows' actions.
+            className={cn("-mr-3", !confirmingClear && "text-muted-foreground")}
+            variant={confirmingClear ? "destructive" : "ghost"}
+            size="sm"
+            onClick={onClear}
+          >
+            {/* Not "Clear": the editor above already has one of those. */}
+            {confirmingClear ? "Confirm Clear" : "Clear All"}
+          </Button>
+        ) : null}
+      </div>
       <div className="flex flex-col gap-2">
         {history.length === 0 ? (
           // No container: an empty state is a message, not a drop target.
@@ -84,6 +107,7 @@ export function HistoryList({
                     )
                   }
                   onCopy={() => onCopy(clip.text)}
+                  onDelete={onDelete ? () => onDelete(clip.id) : undefined}
                 />
               </div>
             </div>
@@ -100,12 +124,14 @@ function HistoryRow({
   arriving,
   onToggle,
   onCopy,
+  onDelete,
 }: {
   clip: SessionClip;
   expanded: boolean;
   arriving: boolean;
   onToggle: () => void;
   onCopy: () => void;
+  onDelete?: () => void;
 }) {
   const incoming = clip.direction === "incoming";
   const detected = detectClipKind(clip.text);
@@ -188,15 +214,28 @@ function HistoryRow({
         ) : null}
       </div>
 
-      <Button
-        className="col-start-2 row-start-1 justify-self-end text-link md:self-center"
-        variant="ghost"
-        size="sm"
-        aria-label="Copy this clip"
-        onClick={onCopy}
-      >
-        Copy
-      </Button>
+      <div className="col-start-2 row-start-1 flex items-center justify-self-end md:self-center">
+        {onDelete ? (
+          <Button
+            className="text-muted-foreground hover:bg-destructive/12 hover:text-destructive"
+            variant="ghost"
+            size="sm"
+            aria-label="Delete this clip for everyone"
+            onClick={onDelete}
+          >
+            Delete
+          </Button>
+        ) : null}
+        <Button
+          className="text-link"
+          variant="ghost"
+          size="sm"
+          aria-label="Copy this clip"
+          onClick={onCopy}
+        >
+          Copy
+        </Button>
+      </div>
     </div>
   );
 }

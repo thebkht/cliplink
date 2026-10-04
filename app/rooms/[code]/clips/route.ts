@@ -4,17 +4,25 @@ import {
   rateLimitResponse,
   storageErrorResponse,
 } from "@/lib/cliplink/errors";
-import { publishClip } from "@/lib/cliplink/pubsub";
-import { clipRateLimit, getClientIp } from "@/lib/cliplink/rate-limit";
+import { eraseTokenMatches, readBearerToken } from "@/lib/cliplink/erase";
+import { publishClip, publishErase } from "@/lib/cliplink/pubsub";
+import {
+  clipRateLimit,
+  eraseRateLimit,
+  getClientIp,
+} from "@/lib/cliplink/rate-limit";
 import { createClipId, storage } from "@/lib/cliplink/storage";
 import type {
   CreateClipRequest,
   CreateClipResponse,
+  EraseClipsResponse,
   PollClipsResponse,
 } from "@/lib/cliplink/types";
 import {
+  parseEraseRequest,
   validateClipCiphertext,
   validateClipMeta,
+  validateEraseToken,
   validateRoomCode,
   validateSenderId,
 } from "@/lib/cliplink/validation";
@@ -35,18 +43,94 @@ export async function GET(
   const after = Number(new URL(request.url).searchParams.get("after") ?? "0");
   const afterId = Number.isFinite(after) && after >= 0 ? after : 0;
 
-  let clips;
+  let found;
   try {
-    clips = await storage.getClipsAfter(code, afterId);
+    found = await storage.getClipsAfter(code, afterId);
   } catch (error) {
     return storageErrorResponse(error);
   }
 
-  if (!clips) {
+  if (!found) {
     return errorResponse(404, "room_not_found", "Room not found.");
   }
 
-  const response: PollClipsResponse = { clips };
+  const response: PollClipsResponse = found;
+  return noStoreJson(response);
+}
+
+/**
+ * Deletes clips for everyone in the room. Authorised by the room's erase
+ * token, which only a key holder can derive — the room code alone is not
+ * enough. Idempotent: deleting what is already gone succeeds and removes
+ * nothing.
+ */
+export async function DELETE(request: Request, context: RoomRouteContext) {
+  const { code } = await context.params;
+  if (!validateRoomCode(code)) {
+    return errorResponse(400, "invalid_room_code", "Invalid room code.");
+  }
+
+  // Before the token is looked at, so guessing one is rate limited too.
+  const rateLimit = await eraseRateLimit.check(`${getClientIp(request)}:${code}`);
+  if (!rateLimit.ok) {
+    return rateLimitResponse(
+      "Too many deletions. Please wait a moment and try again.",
+      rateLimit.retryAfterSeconds,
+    );
+  }
+
+  const token = readBearerToken(request);
+  if (!validateEraseToken(token)) {
+    return errorResponse(401, "invalid_erase_token", "A valid erase token is required.");
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return errorResponse(400, "invalid_json", "Request body must be valid JSON.");
+  }
+
+  const eraseRequest = parseEraseRequest(payload);
+  if (!eraseRequest) {
+    return errorResponse(
+      400,
+      "invalid_erase_request",
+      "Name the clips to delete, or the id to delete up to.",
+    );
+  }
+
+  let erased;
+  try {
+    const room = await storage.getRoom(code);
+    if (!room) {
+      return errorResponse(404, "room_not_found", "Room not found.");
+    }
+    if (room.eraseCheck === null) {
+      return errorResponse(
+        403,
+        "erase_unavailable",
+        "Clips in this room cannot be deleted.",
+      );
+    }
+    if (!eraseTokenMatches(token, room.eraseCheck)) {
+      return errorResponse(403, "invalid_erase_token", "That token does not open this room.");
+    }
+
+    erased = await storage.eraseClips(code, eraseRequest);
+  } catch (error) {
+    return storageErrorResponse(error);
+  }
+
+  if (!erased) {
+    return errorResponse(404, "room_not_found", "Room not found.");
+  }
+
+  if (erased.ids.length > 0) {
+    await publishErase(code, erased);
+  }
+
+  const response: EraseClipsResponse = erased;
   return noStoreJson(response);
 }
 

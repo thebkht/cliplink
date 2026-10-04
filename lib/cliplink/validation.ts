@@ -2,10 +2,13 @@
 export {
   normalizeDeviceName,
   parseClientMessage,
+  parseEraseRequest,
   parseSignalPayload,
   validateClipCiphertext,
   validateClipMeta,
   validateClipText,
+  validateEraseCheck,
+  validateEraseToken,
   validateKeyCheck,
   validatePeerId,
   validateRoomCode,

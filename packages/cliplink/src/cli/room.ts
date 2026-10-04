@@ -63,9 +63,12 @@ export async function openSession(args: ParsedArgs): Promise<Session> {
   const key = await generateRoomKey();
   // The server is told the fingerprint, never the key: it can tell a joiner
   // their key is wrong without being any closer to holding it.
+  // The erase check goes with it, or clips in this room could never be
+  // deleted: it can only be set as the room is made.
   const { code, ttlSeconds } = await http.createRoomRequest(
     key.check,
     args.ttlSeconds ?? undefined,
+    key.eraseCheck,
   );
   const transport = createEncryptedTransport(createWebSocketTransport(options));
   transport.setRoomKey(code, key);

@@ -3,6 +3,8 @@ import type {
   CreateClipRequest,
   CreateClipResponse,
   CreateRoomResponse,
+  EraseClipsRequest,
+  EraseClipsResponse,
   GetRoomResponse,
   PollClipsResponse,
   RoomCode,
@@ -15,7 +17,18 @@ export function resolveBaseUrl(baseUrl: TransportOptions["baseUrl"]) {
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as T | ApiError;
+  let payload: T | ApiError;
+  try {
+    payload = (await response.json()) as T | ApiError;
+  } catch {
+    // A route the server does not have answers with no JSON at all — which is
+    // what a deployment from before a request existed does with it.
+    throw new Error(
+      response.ok
+        ? "The server sent a response that could not be read."
+        : `The server refused the request (${response.status}).`,
+    );
+  }
 
   if (!response.ok) {
     const error = payload as ApiError;
@@ -35,9 +48,15 @@ export type HttpClient = {
     roomCode: RoomCode,
     afterId: number,
   ) => Promise<PollClipsResponse>;
+  eraseClipsRequest: (
+    roomCode: RoomCode,
+    token: string,
+    request: EraseClipsRequest,
+  ) => Promise<EraseClipsResponse>;
   createRoomRequest: (
     keyCheck?: string,
     ttlSeconds?: number,
+    eraseCheck?: string,
   ) => Promise<CreateRoomResponse>;
 };
 
@@ -82,19 +101,37 @@ export function createHttpClient({
       return parseResponse<PollClipsResponse>(response);
     },
 
+    async eraseClipsRequest(roomCode, token, request) {
+      const response = await fetchImpl(url(`/rooms/${roomCode}/clips`), {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+        // A delete started as a tab closes should still land.
+        keepalive: true,
+      });
+      return parseResponse<EraseClipsResponse>(response);
+    },
+
     /**
      * `keyCheck` is the fingerprint of a generated key, never the key — so a
      * joiner can be told their key is wrong without the server being any closer
      * to holding it. Omitted for an open room, whose key comes from the code and
-     * which therefore has nothing to check against.
+     * which therefore has nothing to check against. `eraseCheck` is omitted
+     * there too: the server derives an open room's for itself.
      */
-    async createRoomRequest(keyCheck, ttlSeconds) {
+    async createRoomRequest(keyCheck, ttlSeconds, eraseCheck) {
       const body: Record<string, unknown> = {};
       if (keyCheck) {
         body.keyCheck = keyCheck;
       }
       if (ttlSeconds !== undefined) {
         body.ttlSeconds = ttlSeconds;
+      }
+      if (eraseCheck) {
+        body.eraseCheck = eraseCheck;
       }
 
       const response = await fetchImpl(url("/rooms"), {

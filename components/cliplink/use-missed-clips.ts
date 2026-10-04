@@ -20,6 +20,8 @@ type MissedClips = {
   roomCode: RoomCode;
   /** The newest clip's text, or null when this device could not read it. */
   text: string | null;
+  /** Which clip `text` is, so it can be let go of if that clip is deleted. */
+  clipId: number;
   count: number;
 };
 
@@ -33,6 +35,8 @@ type MissedClips = {
  */
 export function useMissedClips({ pushToast }: { pushToast: PushToast }) {
   const missedRef = useRef<MissedClips | null>(null);
+  /** The clip a standing "Copy" toast is holding the text of, if one is up. */
+  const offeredIdRef = useRef<number | null>(null);
   const pushToastRef = useRef(pushToast);
   useEffect(() => {
     pushToastRef.current = pushToast;
@@ -48,7 +52,7 @@ export function useMissedClips({ pushToast }: { pushToast: PushToast }) {
       }
     }
 
-    async function copyOnReturn(text: string) {
+    async function copyOnReturn(text: string, clipId: number) {
       try {
         await writeClipboard(text);
         pushToastRef.current(
@@ -59,6 +63,7 @@ export function useMissedClips({ pushToast }: { pushToast: PushToast }) {
       } catch {
         // Safari and Firefox want a click before they will write, and coming
         // back to a tab is not one. The button is, so the toast waits for it.
+        offeredIdRef.current = clipId;
         pushToastRef.current("A clip arrived while you were away.", "info", {
           unprompted: true,
           persistent: true,
@@ -79,7 +84,7 @@ export function useMissedClips({ pushToast }: { pushToast: PushToast }) {
       // An offer to copy an older clip is out of date either way.
       dismissToast(COPY_PROMPT_ID);
       if (missed.text !== null) {
-        void copyOnReturn(missed.text);
+        void copyOnReturn(missed.text, missed.clipId);
       }
     }
 
@@ -92,9 +97,13 @@ export function useMissedClips({ pushToast }: { pushToast: PushToast }) {
     };
   }, []);
 
-  function hold(roomCode: RoomCode, text: string | null, arrived: number) {
+  function hold(
+    roomCode: RoomCode,
+    clip: { id: number; text: string | null },
+    arrived: number,
+  ) {
     const count = (missedRef.current?.count ?? 0) + arrived;
-    missedRef.current = { roomCode, text, count };
+    missedRef.current = { roomCode, text: clip.text, clipId: clip.id, count };
     setUnreadBadge(count);
     void showClipNotification(roomCode, count);
   }
@@ -111,5 +120,21 @@ export function useMissedClips({ pushToast }: { pushToast: PushToast }) {
     void closeClipNotification(missed.roomCode);
   }
 
-  return { hold, reset };
+  /**
+   * A deleted clip must not be copied on return, nor offered by a toast that
+   * is still holding its text. The arrival itself stays marked: something did
+   * come in while the tab was away.
+   */
+  function drop(ids: number[]) {
+    const missed = missedRef.current;
+    if (missed && missed.text !== null && ids.includes(missed.clipId)) {
+      missedRef.current = { ...missed, text: null };
+    }
+    if (offeredIdRef.current !== null && ids.includes(offeredIdRef.current)) {
+      offeredIdRef.current = null;
+      dismissToast(COPY_PROMPT_ID);
+    }
+  }
+
+  return { hold, drop, reset };
 }

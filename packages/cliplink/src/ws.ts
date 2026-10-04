@@ -33,6 +33,7 @@ export function createWebSocketTransport(
     connect: http.connectRoom,
     sendClip: http.sendClipRequest,
     pollClips: http.pollClipsRequest,
+    eraseClips: http.eraseClipsRequest,
 
     streamClips(roomCode: RoomCode, afterId, peerId, handlers) {
       // Resolved here rather than at construction: a browser transport is built
@@ -73,7 +74,20 @@ export function createWebSocketTransport(
           // Node's `ws` may hand over a Buffer where a browser gives a string.
           const message = JSON.parse(String(event.data)) as WsServerMessage;
           if (message.type === "ready") {
-            handlers.onOpen?.();
+            handlers.onOpen?.(
+              typeof message.eraseGen === "number" ? message.eraseGen : undefined,
+            );
+            return;
+          }
+          if (message.type === "removed") {
+            const { ids, gen } = message;
+            if (
+              Array.isArray(ids) &&
+              ids.every((id) => typeof id === "number") &&
+              typeof gen === "number"
+            ) {
+              handlers.onRemoved?.(ids, gen);
+            }
             return;
           }
           if (message.type === "clip") {

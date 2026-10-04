@@ -41,6 +41,9 @@ export async function GET(
       ttlSeconds: room.ttlSeconds,
       ...(room.keyCheck === null ? {} : { keyCheck: room.keyCheck }),
       ...(expiresAt === null ? {} : { expiresAt }),
+      // Whether, never what: the check itself is the server's alone.
+      erasable: room.eraseCheck !== null,
+      eraseGen: room.eraseGen,
     },
     clips: room.clips,
   };

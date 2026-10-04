@@ -2,10 +2,13 @@ import { parseFileSignal } from "@thebkht/rtc-file-transfer";
 
 import {
   CIPHERTEXT_PATTERN,
+  ERASE_CHECK_CHARS,
+  ERASE_TOKEN_CHARS,
   MAX_CLIP_CHARS,
   MAX_CLIP_META_CHARS,
   MAX_CLIP_CIPHERTEXT_CHARS,
   MAX_DEVICE_NAME_CHARS,
+  MAX_ERASE_IDS,
   MAX_FILE_BYTES,
   MAX_FILE_NAME_CHARS,
   MAX_ROOM_TTL_SECONDS,
@@ -15,7 +18,12 @@ import {
   ROOM_TTL_SECONDS,
 } from "./protocol.ts";
 import { isValidRoomCode } from "./room-code.ts";
-import type { ClipMeta, SignalPayload, WsClientMessage } from "./types.ts";
+import type {
+  ClipMeta,
+  EraseClipsRequest,
+  SignalPayload,
+  WsClientMessage,
+} from "./types.ts";
 
 const MAX_ID_CHARS = 64;
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -141,6 +149,61 @@ export function validateKeyCheck(input: unknown) {
   }
 
   return { ok: true as const, keyCheck: input };
+}
+
+const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The hash of the creator's erase token. As with the key fingerprint, the
+ * server can check the shape and nothing more.
+ */
+export function validateEraseCheck(input: unknown) {
+  if (input === undefined || input === null) {
+    return { ok: true as const, eraseCheck: undefined };
+  }
+
+  if (
+    typeof input !== "string" ||
+    input.length !== ERASE_CHECK_CHARS ||
+    !BASE64URL_PATTERN.test(input)
+  ) {
+    return { ok: false as const, message: "Invalid erase check." };
+  }
+
+  return { ok: true as const, eraseCheck: input };
+}
+
+export function validateEraseToken(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length === ERASE_TOKEN_CHARS &&
+    BASE32_PATTERN.test(value)
+  );
+}
+
+function isClipId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Rebuilt from the one selector it carries; anything else is rejected. */
+export function parseEraseRequest(input: unknown): EraseClipsRequest | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  if (Array.isArray(input.ids)) {
+    const { ids } = input;
+    return input.upTo === undefined &&
+      ids.length > 0 &&
+      ids.length <= MAX_ERASE_IDS &&
+      ids.every(isClipId)
+      ? { ids: [...new Set(ids)] }
+      : null;
+  }
+
+  return input.ids === undefined && isClipId(input.upTo)
+    ? { upTo: input.upTo }
+    : null;
 }
 
 export function validateSenderId(senderId: string) {

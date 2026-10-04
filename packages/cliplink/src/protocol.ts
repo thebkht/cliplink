@@ -36,6 +36,15 @@ export const MAX_DEVICE_NAME_CHARS = 40;
  * tag, base64'd) with room to grow.
  */
 export const MAX_CLIP_META_CHARS = 1024;
+/** Characters in an erase token — 32 bytes at 5 bits per character. */
+export const ERASE_TOKEN_CHARS = 52;
+/** Characters in an erase check — a SHA-256 digest, base64url without padding. */
+export const ERASE_CHECK_CHARS = 43;
+/**
+ * Clips one delete request may name. Above any room's stored cap, so "delete
+ * these" can always say all of them, and still a bound on the request.
+ */
+export const MAX_ERASE_IDS = 100;
 // Sealing inflates a signal by base64's 4/3 plus a nonce and a tag, and an SDP
 // offer already approached the old 16 KB ceiling. Left there, the socket's
 // maxPayload would have dropped large offers with no error to see.

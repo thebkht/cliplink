@@ -2,6 +2,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 
 import {
   CLIP_RATE_LIMIT,
+  ERASE_RATE_LIMIT,
   ROOM_CREATE_RATE_LIMIT,
 } from "@/lib/cliplink/constants";
 import { getRedis } from "@/lib/cliplink/redis";
@@ -168,3 +169,4 @@ function createLimiter(name: string, config: RateLimitConfig) {
 
 export const clipRateLimit = createLimiter("clips", CLIP_RATE_LIMIT);
 export const roomCreateRateLimit = createLimiter("rooms", ROOM_CREATE_RATE_LIMIT);
+export const eraseRateLimit = createLimiter("erase", ERASE_RATE_LIMIT);

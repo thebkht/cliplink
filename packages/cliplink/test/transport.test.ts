@@ -92,6 +92,51 @@ describe("createHttpClient", () => {
     });
   });
 
+  it("sends the erase check after the other two, when given", async () => {
+    const { calls, fetchImpl } = recordingFetch({ code: "X7KP2M" });
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await client.createRoomRequest("HQTVJ4C81PPB4", undefined, "check");
+
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+      keyCheck: "HQTVJ4C81PPB4",
+      eraseCheck: "check",
+    });
+  });
+
+  it("deletes with the token in a header, and the selector as the body", async () => {
+    const { calls, fetchImpl } = recordingFetch({ ids: [4], gen: 1 });
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    const response = await client.eraseClipsRequest("X7KP2M", "TOKEN", { ids: [4] });
+
+    assert.equal(calls[0].url, `${BASE}/rooms/X7KP2M/clips`);
+    assert.equal(calls[0].init?.method, "DELETE");
+    assert.equal(
+      (calls[0].init?.headers as Record<string, string>).Authorization,
+      "Bearer TOKEN",
+    );
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { ids: [4] });
+    assert.equal(String(calls[0].url).includes("TOKEN"), false);
+    assert.deepEqual(response, { ids: [4], gen: 1 });
+  });
+
+  it("reports a refusal that came back with no JSON, as an older server's would", async () => {
+    const fetchImpl = (async () => ({
+      ok: false,
+      status: 405,
+      json: async () => {
+        throw new SyntaxError("Unexpected end of JSON input");
+      },
+    })) as unknown as typeof globalThis.fetch;
+    const client = createHttpClient({ baseUrl: BASE, fetch: fetchImpl });
+
+    await assert.rejects(
+      client.eraseClipsRequest("X7KP2M", "TOKEN", { ids: [4] }),
+      /refused the request \(405\)/,
+    );
+  });
+
   it("throws the API's own message rather than a status code", async () => {
     const { fetchImpl } = recordingFetch(
       { error: "Room not found", code: "room_not_found" },
@@ -210,6 +255,46 @@ describe("createWebSocketTransport", () => {
     assert.deepEqual(events, ["open", "left:peer-other"]);
     assert.deepEqual(clips, [13]);
     assert.deepEqual(signals, ["peer-other:v1.xyz"]);
+  });
+
+  it("passes the deletion count on ready, and removals, to their handlers", () => {
+    const transport = createWebSocketTransport({
+      baseUrl: BASE,
+      WebSocket: FakeSocket as unknown as typeof globalThis.WebSocket,
+    });
+    const seen: unknown[] = [];
+    transport.streamClips("X7KP2M", 0, "peer-abcdef", {
+      onOpen: (eraseGen) => seen.push(["open", eraseGen]),
+      onClips: () => {},
+      onRemoved: (ids, gen) => seen.push(["removed", ids, gen]),
+      onDisconnect: (reason) => seen.push(["disconnect", reason]),
+    });
+    const socket = FakeSocket.last!;
+
+    socket.deliver({ type: "ready", eraseGen: 3 });
+    socket.deliver({ type: "removed", ids: [7, 8], gen: 4 });
+    socket.deliver({ type: "ready" });
+
+    assert.deepEqual(seen, [
+      ["open", 3],
+      ["removed", [7, 8], 4],
+      ["open", undefined],
+    ]);
+  });
+
+  it("ignores a malformed removal rather than acting on it or dropping the socket", () => {
+    const { socket, events } = connect(BASE);
+    socket.emit("message", { data: JSON.stringify({ type: "removed", ids: "all", gen: 1 }) });
+    socket.emit("message", { data: JSON.stringify({ type: "removed", ids: [1] }) });
+    assert.deepEqual(events, []);
+  });
+
+  it("ignores a frame type it does not know, as a tab from before it existed must", () => {
+    const { socket, events, clips } = connect(BASE);
+    socket.emit("message", { data: JSON.stringify({ type: "from-the-future", x: 1 }) });
+    socket.deliver({ type: "ready" });
+    assert.deepEqual(events, ["open"]);
+    assert.deepEqual(clips, []);
   });
 
   it("treats a server error message as a disconnect", () => {

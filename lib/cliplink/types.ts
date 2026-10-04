@@ -7,6 +7,8 @@ export type {
   CreateClipResponse,
   CreateRoomRequest,
   CreateRoomResponse,
+  EraseClipsRequest,
+  EraseClipsResponse,
   FileOffer,
   GetRoomResponse,
   PeerId,
